@@ -21,3 +21,7 @@ logs/
 # 临时文件
 *.tmp
 *.temp
+
+# 其他
+UPLOAD_GUIDE.md
+DEPLOY.md
