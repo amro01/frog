@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>方块青蛙过河 0.12</title>
+    <style>
+        body {
+            background-color: #1a1a1a;
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            font-family: 'Courier New', Courier, monospace;
+            color: white;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        .game-container {
+            position: relative;
+            box-shadow: 0 0 50px rgba(0,0,0,0.8);
+            border: 4px solid #333;
+        }
+
+        canvas {
+            background-color: #87CEEB;
+            display: block;
+        }
+
+        #overlay {
+            display: none;
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.6);
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            z-index: 20;
+            opacity: 0;
+            transition: opacity 0.5s;
+        }
+        #overlay.show { opacity: 1; }
+        
+        #overlay h2 { 
+            font-size: 40px; color: #ff3333; margin: 0; 
+            text-shadow: 3px 3px 0 #000;
+            text-transform: uppercase;
+        }
+        
+        #retry-msg {
+            font-size: 18px; color: #fff; margin-top: 15px; 
+            opacity: 0; transition: opacity 0.3s;
+        }
+        #retry-msg.ready {
+            opacity: 1;
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink { 50% { opacity: 0.5; } }
+
+        .sidebar {
+            width: 220px;
+            margin-left: 20px;
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            border: 2px solid #444;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .stat-box { background: #333; padding: 10px; border-left: 4px solid #00ff00; }
+        .stat-box.death { border-color: #ff3333; }
+        .stat-label { font-size: 12px; color: #aaa; display: block; margin-bottom: 5px; }
+        .stat-value { font-size: 24px; font-weight: bold; }
+        
+        .death-detail {
+            font-size: 12px; display: flex; justify-content: space-between;
+            border-bottom: 1px solid #444; padding: 5px 0;
+        }
+
+        #debugPanel {
+            position: absolute; top: 10px; left: 10px;
+            background: rgba(0,0,0,0.8); padding: 10px;
+            border: 1px solid lime; font-size: 10px;
+            pointer-events: none; display: none; z-index: 5;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="game-container">
+        <canvas id="gameCanvas" width="600" height="600"></canvas>
+        <div id="overlay">
+            <h2 id="overlay-title">YOU DIED</h2>
+            <p id="retry-msg">按 [任意键] 重试</p>
+        </div>
+        <div id="debugPanel">Debug Mode ON</div>
+    </div>
+
+    <div class="sidebar">
+        <div class="stat-box">
+            <span class="stat-label">当前关卡</span>
+            <span class="stat-value" id="disp-level">1</span>
+        </div>
+        <div class="stat-box death">
+            <span class="stat-label">牺牲总数</span>
+            <span class="stat-value" id="disp-deaths">0</span>
+        </div>
+        <div style="margin-top: 10px;">
+            <div class="stat-label">死因统计:</div>
+            <div class="death-detail"><span>🚗 惨遭压扁</span> <span id="stat-flat">0</span></div>
+            <div class="death-detail"><span>💥 粉身碎骨</span> <span id="stat-shatter">0</span></div>
+            <div class="death-detail"><span>🌊 落水淹死</span> <span id="stat-drown">0</span></div>
+            <div class="death-detail"><span>🐊 鳄鱼美餐</span> <span id="stat-eaten">0</span></div>
+        </div>
+        <div style="font-size: 11px; color: #666; margin-top: auto;">
+            <!-- 游戏说明已移除 -->
+        </div>
+    </div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const overlay = document.getElementById('overlay');
+    const overlayTitle = document.getElementById('overlay-title');
+    const retryMsg = document.getElementById('retry-msg');
+
+    const COLS = 11; 
+    const ROWS = 10; 
+    const TILE_SIZE = 50; 
+    const VIEW_OFFSET_X = 25; 
+    const VIEW_OFFSET_Y = 50;
+    const DEFAULT_BLOCK_DEPTH = 8; 
+    const UNSTABLE_LIMIT = 0.8; 
+
+    let stats = { deaths: 0, flattened: 0, shattered: 0, drowned: 0, eaten: 0 };
+    let level = 1;
+    let gameState = 'PLAYING'; 
+    let isLevelTransitioning = false;
+    let canRestart = false; 
+    let debugMode = false;
+    let frameCount = 0;
+
+    let crocAnim = { active: false, frame: 0, x: 0, y: 0 };
+
+    let player = {
+        gridX: 5, gridY: 9, 
+        color: '#00ff00', 
+        visible: true,
+        renderMode: 'cube', 
+        crushProgress: 0,
+        isUnstable: false,
+        unstableTimer: 0,
+        lastActionTime: 0, 
+        moveCombo: 0,      
+        isSleeping: false 
+    };
+
+    let particles = [];
+    let mapLayout = [];
+    let obstacles = [];
+
+    // 初始化地图布局
+    function initMapLayout() {
+        mapLayout = [
+            { type: 'grass' }, { type: 'river', dir: 1 }, { type: 'river', dir: -1 }, { type: 'river', dir: 1 },    
+            { type: 'grass' }, { type: 'road', dir: -1 }, { type: 'road', dir: 1 }, { type: 'road', dir: -1 },    
+            { type: 'grass' }, { type: 'grass' }             
+        ];
+    }
+
+    function initLevel(resetPlayer = true) {
+        initMapLayout();
+        if (resetPlayer) {
+            player.gridX = 5; player.gridY = 9;
+            player.visible = true;
+            player.renderMode = 'cube';
+            player.crushProgress = 0;
+            player.isUnstable = false;
+            player.unstableTimer = 0;
+            player.lastActionTime = Date.now();
+            player.moveCombo = 0;
+            player.isSleeping = false;
+        }
+        gameState = 'PLAYING';
+        isLevelTransitioning = false;
+        crocAnim.active = false;
+        canRestart = false; 
+        particles = []; 
+        obstacles = [];
+        
+        overlay.classList.remove('show');
+        overlay.style.display = 'none';
+        retryMsg.classList.remove('ready');
+
+        document.getElementById('disp-level').innerText = level;
+
+        let baseSpeed = 0.5 + (level - 1) * 0.05;
+        if (baseSpeed > 2.0) baseSpeed = 2.0;
+
+        for (let r = 0; r < ROWS; r++) {
+            let rowData = mapLayout[r];
+            if (rowData.type === 'road') {
+                let maxCount = Math.min(3, 2 + Math.floor(level / 5)); 
+                let count = Math.floor(Math.random() * maxCount) + 1;
+                generateLaneObstacles(r, count, rowData, baseSpeed, 'road');
+            } else if (rowData.type === 'river') {
+                let reduction = Math.floor((level - 1) / 4);
+                let safeCount = Math.max(2, 4 - reduction); 
+                let count = safeCount + (Math.random() > 0.5 ? 1 : 0);
+                generateLaneObstacles(r, count, rowData, baseSpeed, 'river');
+            }
+        }
+    }
+
+    function generateLaneObstacles(row, count, rowData, baseSpeed, type) {
+        let laneSpeedMult = (type === 'road') ? (1.0 + Math.random() * 0.4) : 0.9;
+        let finalSpeed = baseSpeed * laneSpeedMult * rowData.dir;
+        let maxObjWidth = (type === 'road') ? TILE_SIZE * 2.2 : TILE_SIZE * 3;
+        let minGap = TILE_SIZE * 1.5;
+        let sectorSize = (COLS * TILE_SIZE) / count;
+
+        if (sectorSize < maxObjWidth + minGap) {
+            count = Math.max(1, count - 1);
+            sectorSize = (COLS * TILE_SIZE) / count;
+        }
+
+        for (let i = 0; i < count; i++) {
+            let width, color;
+            if (type === 'road') {
+                let isTruck = Math.random() > 0.6;
+                width = isTruck ? TILE_SIZE * 2.2 : TILE_SIZE;
+                color = isTruck ? (Math.random()>0.5?'#A9A9A9':'#4682B4') : getRandomCarColor();
+            } else {
+                width = TILE_SIZE * (1.8 + Math.random() * 1.5); 
+                color = '#8B4513';
+            }
+            let maxRandom = Math.max(0, sectorSize - width - 10);
+            let startX = (i * sectorSize) + Math.random() * maxRandom;
+            obstacles.push({
+                row: row, x: startX, width: width, type: type, speed: finalSpeed, color: color,
+                dir: rowData.dir // Store direction for lights
+            });
+        }
+    }
+
+    function getRandomCarColor() {
+        const colors = ['#FF4500', '#FF1493', '#FFFF00', '#00FFFF', '#7FFF00'];
+        return colors[Math.floor(Math.random() * colors.length)];
+    }
+
+    // --- 粒子系统 ---
+    class Particle {
+        constructor(x, y, color, type) {
+            this.x = x; this.y = y; this.color = color; this.type = type;
+            this.life = 1.0; 
+            
+            if (type === 'ripple') {
+                this.radius = 5; this.decay = 0.02; 
+            } else if (type === 'zzz') { 
+                this.decay = 0.012; this.vx = 0.3; this.vy = -0.3 - Math.random() * 0.3; this.size = 20 + Math.random() * 5;
+            } else if (type === 'sweat') { 
+                this.decay = 0.015; this.vx = (Math.random() - 0.5) * 2; this.vy = -2.0; this.size = 6; this.gravity = 0.12;
+            } else { 
+                this.size = Math.random() * 6 + 3; 
+                let angle = Math.random() * Math.PI * 2; let speed = Math.random() * 5 + 2; 
+                this.vx = Math.cos(angle) * speed; this.vy = Math.sin(angle) * speed;
+                this.gravity = 0; this.friction = 0.92; this.decay = Math.random() * 0.01 + 0.005; 
+            }
+        }
+        update() {
+            if (this.type === 'ripple') {
+                this.radius += 0.5; this.life -= this.decay;
+            } else if (this.type === 'zzz') {
+                this.x += this.vx; this.y += this.vy; this.life -= this.decay;
+            } else if (this.type === 'sweat') {
+                this.x += this.vx; this.y += this.vy; this.vy += this.gravity; this.life -= this.decay;
+            } else {
+                this.x += this.vx; this.y += this.vy; this.vx *= this.friction; this.vy *= this.friction; this.life -= this.decay;
+            }
+        }
+        draw(ctx) {
+            ctx.globalAlpha = Math.max(0, this.life);
+            if (this.type === 'ripple') {
+                ctx.strokeStyle = this.color; ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2); ctx.stroke();
+            } else if (this.type === 'zzz') {
+                ctx.fillStyle = this.color; ctx.font = `bold ${this.size}px monospace`; ctx.fillText("Z", this.x, this.y);
+            } else if (this.type === 'sweat') {
+                ctx.fillStyle = this.color; ctx.beginPath(); ctx.arc(this.x, this.y, this.size, 0, Math.PI*2); ctx.fill();
+            } else {
+                ctx.fillStyle = this.color; ctx.fillRect(this.x, this.y, this.size, this.size);
+            }
+            ctx.globalAlpha = 1.0;
+        }
+    }
+
+    function spawnParticles(x, y, color, count, type) {
+        for(let i=0; i<count; i++) {
+            let offsetX = 0, offsetY = 0;
+            if (type === 'shatter') {
+                offsetX = (Math.random() - 0.5) * TILE_SIZE * 0.5;
+                offsetY = (Math.random() - 0.5) * TILE_SIZE * 0.5;
+            }
+            particles.push(new Particle(x + offsetX, y + offsetY, color, type));
+        }
+    }
+
+    // --- 死亡与状态 ---
+    function triggerDeath(reason) {
+        if (gameState !== 'PLAYING') return;
+        gameState = 'GAMEOVER';
+        canRestart = false; 
+        stats.deaths++;
+        let centerX = player.gridX * TILE_SIZE + TILE_SIZE/2;
+        let centerY = player.gridY * TILE_SIZE + TILE_SIZE/2;
+        let drawX = player.gridX * TILE_SIZE; let drawY = player.gridY * TILE_SIZE;
+
+        if (reason === 'car') {
+            if (Math.random() > 0.5) {
+                player.renderMode = 'flattening'; player.crushProgress = 0;
+                stats.flattened++; overlayTitle.innerText = "惨遭压扁"; overlayTitle.style.color = "#ffff00";
+            } else {
+                player.visible = false; spawnParticles(centerX, centerY, player.color, 60, 'shatter');
+                stats.shattered++; overlayTitle.innerText = "粉身碎骨"; overlayTitle.style.color = "#ff3333";
+            }
+        } else if (reason === 'water') {
+             player.visible = false;
+             if (Math.random() > 0.5) {
+                 spawnParticles(centerX, centerY, '#fff', 3, 'ripple'); spawnParticles(centerX, centerY, '#87CEEB', 2, 'ripple');
+                 stats.drowned++; overlayTitle.innerText = "咕噜咕噜..."; overlayTitle.style.color = "#1E90FF";
+             } else {
+                 stats.eaten++; crocAnim.active = true; crocAnim.frame = 0; crocAnim.x = drawX; crocAnim.y = drawY;
+                 setTimeout(() => { spawnParticles(centerX, centerY, '#ff0000', 60, 'shatter'); }, 200);
+                 overlayTitle.innerText = "鳄鱼: 真香!"; overlayTitle.style.color = "#ff0000";
+             }
+        } else if (reason === 'bounds') {
+            player.visible = false; stats.drowned++; overlayTitle.innerText = "迷失太空"; overlayTitle.style.color = "#888";
+        }
+        updateStatsUI();
+        overlay.style.display = 'flex'; overlay.offsetHeight; overlay.classList.add('show');
+        setTimeout(() => { retryMsg.classList.add('ready'); canRestart = true; }, 1000);
+    }
+    function updateStatsUI() {
+        document.getElementById('disp-deaths').innerText = stats.deaths;
+        document.getElementById('stat-flat').innerText = stats.flattened;
+        document.getElementById('stat-shatter').innerText = stats.shattered;
+        document.getElementById('stat-drown').innerText = stats.drowned;
+        document.getElementById('stat-eaten').innerText = stats.eaten;
+    }
+
+    // --- 绘图函数 (视觉增强) ---
+
+    // 基础方块绘制
+    function drawCube(x, y, w, h, depth, color, eyeStyle = 'none') {
+        let displayColor = color;
+        if (eyeStyle === 'unstable' && Math.floor(Date.now() / 50) % 2 === 0) displayColor = '#ff3333'; 
+
+        ctx.fillStyle = darkenColor(displayColor);
+        ctx.fillRect(x + w, y - heightOffset, depth, h); // 右侧
+        ctx.fillRect(x, y + h - heightOffset, w, depth); // 下侧
+        ctx.fillRect(x + w, y + h - heightOffset, depth, depth); // 角落
+
+        ctx.fillStyle = displayColor;
+        ctx.fillRect(x, y - heightOffset, w, h); // 顶面
+        
+        // 只有青蛙才画眼睛
+        if (eyeStyle !== 'none') {
+            ctx.fillStyle = 'black';
+            if (eyeStyle === 'closed') {
+                ctx.fillRect(x + 5, y - heightOffset + 8, 8, 2);
+                ctx.fillRect(x + w - 13, y - heightOffset + 8, 8, 2);
+            } else if (eyeStyle === 'open' || eyeStyle === 'unstable') {
+                ctx.fillRect(x + 5, y - heightOffset + 5, 5, 5);
+                ctx.fillRect(x + w - 10, y - heightOffset + 5, 5, 5);
+            }
+        }
+    }
+
+    // [美化] 绘制木头 (带纹理)
+    function drawLog(obs) {
+        let hOffset = 2;
+        // 1. 画基础木头
+        drawCube(obs.x, obs.row * TILE_SIZE, obs.width, TILE_SIZE, DEFAULT_BLOCK_DEPTH, '#8B4513');
+        
+        // 2. 画纹理 (树皮条纹)
+        ctx.fillStyle = '#5C4033'; // 深褐色
+        let y = obs.row * TILE_SIZE - hOffset;
+        
+        // 在顶面上画几条随机的横线
+        for (let i = 10; i < obs.width - 10; i += 20) {
+            ctx.fillRect(obs.x + i, y, 4, TILE_SIZE);
+        }
+        // 画两端的"年轮面" (简单用深色表示)
+        ctx.fillRect(obs.x, y, 5, TILE_SIZE);
+        ctx.fillRect(obs.x + obs.width - 5, y, 5, TILE_SIZE);
+    }
+
+    // [美化] 绘制汽车 (带车窗和车灯)
+    function drawCar(obs) {
+        let hOffset = 5;
+        let y = obs.row * TILE_SIZE;
+        // 1. 车身
+        drawCube(obs.x, y, obs.width, TILE_SIZE, DEFAULT_BLOCK_DEPTH, obs.color);
+        
+        // 2. 挡风玻璃 (顶面中间浅蓝色)
+        ctx.fillStyle = '#87CEFA'; // SkyBlue
+        let glassMargin = 6;
+        ctx.fillRect(obs.x + glassMargin, y - hOffset + glassMargin, 
+                     obs.width - glassMargin*2, TILE_SIZE - glassMargin*2);
+
+        // 3. 车灯 (根据行驶方向)
+        let lightY = y - hOffset + 10;
+        let lightSize = 6;
+        
+        if (obs.dir === 1) { // 向右行驶
+            // 前灯 (黄) - 右侧
+            ctx.fillStyle = '#FFFF00'; 
+            ctx.fillRect(obs.x + obs.width - 4, lightY, 4, lightSize);
+            ctx.fillRect(obs.x + obs.width - 4, lightY + 20, 4, lightSize);
+            // 尾灯 (红) - 左侧
+            ctx.fillStyle = '#FF0000';
+            ctx.fillRect(obs.x, lightY, 4, lightSize);
+            ctx.fillRect(obs.x, lightY + 20, 4, lightSize);
+        } else { // 向左行驶
+            // 前灯 (黄) - 左侧
+            ctx.fillStyle = '#FFFF00';
+            ctx.fillRect(obs.x, lightY, 4, lightSize);
+            ctx.fillRect(obs.x, lightY + 20, 4, lightSize);
+            // 尾灯 (红) - 右侧
+            ctx.fillStyle = '#FF0000';
+            ctx.fillRect(obs.x + obs.width - 4, lightY, 4, lightSize);
+            ctx.fillRect(obs.x + obs.width - 4, lightY + 20, 4, lightSize);
+        }
+    }
+
+    // [美化] 绘制马路细节
+    function drawRoadDetails(row) {
+        let y = row * TILE_SIZE;
+        // 绘制虚线车道线
+        ctx.fillStyle = '#666'; // 比路面稍亮
+        let dashW = 20;
+        let gap = 30;
+        for (let x = 0; x < COLS * TILE_SIZE; x += (dashW + gap)) {
+            // 画在路中间
+            ctx.fillRect(x, y + TILE_SIZE/2 - 2, dashW, 4);
+        }
+    }
+
+    // [美化] 绘制河流细节
+    function drawRiverDetails(row) {
+        let y = row * TILE_SIZE;
+        // 绘制波纹 (浅色线条)
+        ctx.fillStyle = '#1c86ee'; // 稍亮一点的蓝
+        // 简单的动态波纹效果 (利用 frameCount)
+        let offset = (frameCount * 0.5) % 50; 
+        if (mapLayout[row].dir === -1) offset = -offset; // 逆流
+
+        for (let x = -50; x < COLS * TILE_SIZE; x += 60) {
+            let waveX = x + offset;
+            if (waveX < COLS * TILE_SIZE && waveX > 0) {
+                ctx.fillRect(waveX, y + 10, 20, 2);
+                ctx.fillRect(waveX + 30, y + 35, 15, 2);
+            }
+        }
+    }
+
+    function drawPancake(cx, cy, w, h) {
+        ctx.save();
+        ctx.fillStyle = '#004400'; ctx.beginPath(); ctx.ellipse(cx + 2, cy + 2, w/2 + 2, h/2 - 4, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#00ff00'; ctx.beginPath(); ctx.ellipse(cx, cy, w/2, h/2 - 5, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#000'; ctx.lineWidth = 2; let eyeOffset = w * 0.25; drawXMark(cx - eyeOffset, cy); drawXMark(cx + eyeOffset, cy);
+        ctx.restore();
+    }
+    function drawXMark(cx, cy) { ctx.beginPath(); ctx.moveTo(cx - 3, cy - 3); ctx.lineTo(cx + 3, cy + 3); ctx.moveTo(cx + 3, cy - 3); ctx.lineTo(cx - 3, cy + 3); ctx.stroke(); }
+    function drawCrocodileEffect() {
+        if (!crocAnim.active) return;
+        crocAnim.frame++; let cx = crocAnim.x; let cy = crocAnim.y; let biteSpeed = 5; let maxOpen = 25; let currentOffset = Math.max(0, maxOpen - crocAnim.frame * biteSpeed);
+        ctx.save(); ctx.translate(VIEW_OFFSET_X, VIEW_OFFSET_Y); heightOffset = 20; 
+        drawCube(cx - 5, cy - currentOffset - 10, TILE_SIZE + 10, 20, 8, '#555'); ctx.fillStyle = '#fff'; for(let i=0; i<3; i++) ctx.fillRect(cx + 10 + i*15, cy - currentOffset + 10, 5, 5);
+        drawCube(cx - 5, cy + TILE_SIZE + currentOffset - 10, TILE_SIZE + 10, 20, 8, '#555'); ctx.fillStyle = '#fff'; for(let i=0; i<3; i++) ctx.fillRect(cx + 10 + i*15, cy + TILE_SIZE + currentOffset - 15, 5, 5);
+        ctx.restore(); if (crocAnim.frame > 30) crocAnim.active = false;
+    }
+    function darkenColor(color) { if(color.startsWith('#')) return '#444'; return '#333'; }
+    function getOverlap(x1, w1, x2, w2) { let start = Math.max(x1, x2); let end = Math.min(x1 + w1, x2 + w2); return (end < start) ? 0 : end - start; }
+    function isColliding(x1, x2, w1, w2) { return x1 < x2 + w2 && x1 + w1 > x2; }
+
+    function update() {
+        frameCount++;
+        let now = Date.now();
+        if (gameState === 'PLAYING') {
+            if (now - player.lastActionTime > 2000) { 
+                player.isSleeping = true;
+                if (frameCount % 60 === 0) { let px = player.gridX * TILE_SIZE + TILE_SIZE/2; let py = player.gridY * TILE_SIZE; spawnParticles(px, py, '#fff', 1, 'zzz'); }
+            } else { player.isSleeping = false; }
+        }
+        if (player.renderMode === 'flattening') {
+            player.crushProgress += 0.02; if (player.crushProgress >= 1) player.crushProgress = 1;
+        }
+        obstacles.forEach(obs => {
+            obs.x += obs.speed; let totalW = COLS * TILE_SIZE;
+            if (obs.speed > 0 && obs.x > totalW) obs.x = -obs.width; else if (obs.speed < 0 && obs.x < -obs.width) obs.x = totalW;
+        });
+        for (let i = particles.length - 1; i >= 0; i--) { particles[i].update(); if (particles[i].life <= 0) particles.splice(i, 1); }
+        if (gameState !== 'PLAYING') return;
+
+        let pPxX = player.gridX * TILE_SIZE; let currentRow = mapLayout[player.gridY]; player.isUnstable = false; 
+        if (currentRow.type === 'river') {
+            let onLog = false; let maxOverlap = 0;
+            obstacles.forEach(obs => {
+                if (obs.row === player.gridY) {
+                    let overlap = getOverlap(pPxX, TILE_SIZE, obs.x, obs.width);
+                    if (overlap > 0) { onLog = true; player.gridX += obs.speed / TILE_SIZE; if (overlap > maxOverlap) maxOverlap = overlap; }
+                }
+            });
+            if (!onLog) triggerDeath('water');
+            else { if (maxOverlap < TILE_SIZE * 0.4) { player.isUnstable = true; player.unstableTimer += 1/60; if (player.unstableTimer > UNSTABLE_LIMIT) triggerDeath('water'); } else player.unstableTimer = 0; }
+        } else player.unstableTimer = 0;
+        if (currentRow.type === 'road') {
+            obstacles.forEach(obs => { if (obs.row === player.gridY && isColliding(pPxX + 12, obs.x + 2, TILE_SIZE - 24, obs.width - 4)) triggerDeath('car'); });
+        }
+        if (player.gridX < -0.5 || player.gridX >= COLS - 0.5) triggerDeath('bounds');
+        if (player.gridY === 0 && !isLevelTransitioning) {
+            isLevelTransitioning = true; level++;
+            document.querySelector('.game-container').style.boxShadow = "0 0 100px #fff";
+            setTimeout(() => { document.querySelector('.game-container').style.boxShadow = "0 0 50px rgba(0,0,0,0.8)"; initLevel(); }, 500);
+        }
+    }
+
+    function draw() {
+        ctx.fillStyle = '#222'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.save(); ctx.translate(VIEW_OFFSET_X, VIEW_OFFSET_Y);
+
+        // 1. 绘制背景层 (加入细节)
+        for (let r = 0; r < ROWS; r++) {
+            let type = mapLayout[r].type;
+            let color = (type === 'grass') ? '#7CFC00' : (type === 'road') ? '#555' : '#1E90FF';
+            heightOffset = 0;
+            drawCube(0, r * TILE_SIZE, COLS * TILE_SIZE, TILE_SIZE, DEFAULT_BLOCK_DEPTH, color, 'none');
+            
+            // 绘制环境细节
+            if (type === 'road') drawRoadDetails(r);
+            if (type === 'river') drawRiverDetails(r);
+            if (type === 'grass') { // 简单杂草点缀
+                ctx.fillStyle = '#006400';
+                if(r%2===0) ctx.fillRect(50, r*TILE_SIZE+10, 4, 4);
+                else ctx.fillRect(200, r*TILE_SIZE+30, 4, 4);
+            }
+        }
+
+        // 2. 绘制障碍物 (使用专用函数)
+        obstacles.forEach(obs => {
+            if (obs.type === 'road') {
+                drawCar(obs);
+            } else {
+                drawLog(obs);
+            }
+        });
+
+        // 3. 绘制玩家
+        if (player.visible) {
+            let px = player.gridX * TILE_SIZE; let py = player.gridY * TILE_SIZE;
+            if (player.renderMode === 'flattening') {
+                let progress = player.crushProgress;
+                let startW = TILE_SIZE - 10; let startH = TILE_SIZE - 10;
+                let endW = TILE_SIZE * 1.5; let endH = TILE_SIZE * 1.2;
+                let curW = startW + (endW - startW) * progress;
+                let curH = startH + (endH - startH) * progress;
+                let cx = px + TILE_SIZE/2; let cy = py + TILE_SIZE/2 + 5;
+                drawPancake(cx, cy, curW, curH);
+            } else {
+                heightOffset = 10;
+                let eyeState = player.isSleeping ? 'closed' : (player.isUnstable ? 'unstable' : 'open');
+                drawCube(px + 5, py + 5, TILE_SIZE - 10, TILE_SIZE - 10, DEFAULT_BLOCK_DEPTH, player.color, eyeState);
+            }
+        }
+        ctx.restore();
+        ctx.save(); ctx.translate(VIEW_OFFSET_X, VIEW_OFFSET_Y); particles.forEach(p => p.draw(ctx)); ctx.restore();
+        drawCrocodileEffect();
+    }
+
+    function loop() { update(); draw(); requestAnimationFrame(loop); }
+    function handleInput(key) {
+        if (gameState !== 'PLAYING' || isLevelTransitioning) return;
+        let now = Date.now();
+        if (now - player.lastActionTime < 300) player.moveCombo++; else player.moveCombo = 0;
+        player.lastActionTime = now; player.isSleeping = false;
+        if (player.moveCombo > 4) { let px = player.gridX * TILE_SIZE + TILE_SIZE/2; let py = player.gridY * TILE_SIZE; spawnParticles(px, py, '#e0f7fa', 2, 'sweat'); }
+        switch(key) {
+            case 'ArrowUp': if (player.gridY > 0) player.gridY--; break;
+            case 'ArrowDown': if (player.gridY < ROWS - 1) player.gridY++; break;
+            case 'ArrowLeft': player.gridX -= 0.5; break;
+            case 'ArrowRight': player.gridX += 0.5; break;
+        }
+    }
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'd') { debugMode = !debugMode; document.getElementById('debugPanel').style.display = debugMode?'block':'none'; return; }
+        if (gameState === 'GAMEOVER') { if (canRestart) initLevel(true); return; }
+        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) handleInput(e.key);
+        else if (e.key === ' ') { if(canRestart && gameState === 'GAMEOVER') initLevel(true); }
+    });
+    initLevel(); loop();
+</script>
+</body>
+</html>
