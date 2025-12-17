@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>方块青蛙过河 0.5 - 逻辑修复版</title>
+    <title>方块青蛙过河 0.51 </title>
     <style>
         body {
             background-color: #1a1a1a;
@@ -119,6 +119,190 @@
             border: 1px solid lime; font-size: 10px;
             pointer-events: none; display: none; z-index: 5;
         }
+
+        /* 姓名输入模态框样式 */
+        .name-modal {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.9);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 30;
+        }
+
+        .name-modal-content {
+            background: #2a2a2a;
+            border: 2px solid #00ffff;
+            border-radius: 8px;
+            padding: 30px;
+            text-align: center;
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
+            animation: modalBounceIn 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+        }
+
+        @keyframes modalBounceIn {
+            0% { opacity: 0; transform: scale(0.3); }
+            50% { transform: scale(1.05); }
+            70% { transform: scale(0.9); }
+            100% { opacity: 1; transform: scale(1); }
+        }
+
+        .name-modal-content h3 {
+            color: #FFD700;
+            margin-bottom: 20px;
+            font-size: 24px;
+            text-shadow: 0 0 10px rgba(255, 215, 0, 0.5);
+        }
+
+        .input-group {
+            margin-bottom: 20px;
+        }
+
+        #player-name-input {
+            width: 250px;
+            padding: 10px;
+            font-size: 16px;
+            background: #333;
+            border: 1px solid #555;
+            border-radius: 4px;
+            color: white;
+            text-align: center;
+            font-family: 'Courier New', monospace;
+            transition: all 0.2s;
+        }
+
+        #player-name-input:focus {
+            outline: none;
+            border-color: #00ffff;
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
+            animation: inputPulse 0.3s ease-out;
+        }
+
+        @keyframes inputPulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.02); }
+            100% { transform: scale(1); }
+        }
+
+        .error-message {
+            color: #ff3333;
+            font-size: 14px;
+            margin-top: 5px;
+            height: 20px;
+        }
+
+        .modal-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+        }
+
+        .btn-primary, .btn-secondary {
+            padding: 10px 20px;
+            font-size: 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: 'Courier New', monospace;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: #00ffff;
+            color: #000;
+            font-weight: bold;
+        }
+
+        .btn-primary:hover {
+            background: #00cccc;
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+            transform: translateY(-2px);
+        }
+
+        .btn-secondary {
+            background: #555;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #666;
+        }
+
+        /* 截图预览样式 */
+        .screenshot-preview {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.95);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 40;
+        }
+
+        .preview-content {
+            background: #2a2a2a;
+            border: 2px solid #00ffff;
+            border-radius: 8px;
+            padding: 20px;
+            max-width: 90%;
+            max-height: 90%;
+            overflow: auto;
+        }
+
+        .preview-content h4 {
+            color: #FFD700;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+
+        .preview-buttons {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        /* 历史记录样式 */
+        .history-list {
+            max-height: 300px;
+            overflow-y: auto;
+            margin: 15px 0;
+        }
+
+        .history-item {
+            background: #333;
+            border-radius: 4px;
+            padding: 10px;
+            margin-bottom: 10px;
+        }
+
+        .history-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+        }
+
+        .player-name {
+            color: #00ffff;
+            font-weight: bold;
+        }
+
+        .history-date {
+            color: #aaa;
+            font-size: 12px;
+        }
+
+        .history-stats {
+            color: #ccc;
+            font-size: 14px;
+        }
     </style>
 </head>
 <body>
@@ -138,6 +322,22 @@
 
             <p id="retry-msg">按 [任意键] 重试</p>
         </div>
+        
+        <!-- 姓名输入模态框 -->
+        <div id="name-input-modal" class="name-modal" style="display: none;">
+            <div class="name-modal-content">
+                <h3>记录你的成就</h3>
+                <div class="input-group">
+                    <input type="text" id="player-name-input" placeholder="请输入你的名字" maxlength="10">
+                    <div id="name-error" class="error-message"></div>
+                </div>
+                <div class="modal-buttons">
+                    <button id="save-name-btn" class="btn-primary">保存截图</button>
+                    <button id="cancel-name-btn" class="btn-secondary">取消</button>
+                </div>
+            </div>
+        </div>
+        
         <div id="debugPanel">Debug Mode ON</div>
     </div>
 
@@ -494,6 +694,42 @@
         document.getElementById('vic-drown').innerText = stats.drowned + stats.eaten;
         document.getElementById('vic-bt').innerText = stats.bulletTimesTriggered;
         vicStatsBox.style.display = 'block';
+        
+        // 创建按钮容器
+        const buttonContainer = document.createElement('div');
+        buttonContainer.style.marginTop = '20px';
+        buttonContainer.style.display = 'flex';
+        buttonContainer.style.justifyContent = 'center';
+        buttonContainer.style.gap = '15px';
+        
+        // 添加保存成就按钮
+        const saveAchievementBtn = document.createElement('button');
+        saveAchievementBtn.id = 'save-achievement-btn';
+        saveAchievementBtn.className = 'btn-primary';
+        saveAchievementBtn.textContent = '保存成就';
+        saveAchievementBtn.style.padding = '12px 24px';
+        saveAchievementBtn.style.fontSize = '16px';
+        saveAchievementBtn.style.cursor = 'pointer';
+        
+        // 添加查看历史按钮
+        const viewHistoryBtn = document.createElement('button');
+        viewHistoryBtn.id = 'view-history-btn';
+        viewHistoryBtn.className = 'btn-secondary';
+        viewHistoryBtn.textContent = '历史记录';
+        viewHistoryBtn.style.padding = '12px 24px';
+        viewHistoryBtn.style.fontSize = '16px';
+        viewHistoryBtn.style.cursor = 'pointer';
+        
+        buttonContainer.appendChild(saveAchievementBtn);
+        buttonContainer.appendChild(viewHistoryBtn);
+        
+        // 添加到overlay中
+        overlay.appendChild(buttonContainer);
+        
+        // 添加事件监听
+        saveAchievementBtn.addEventListener('click', showNameInputModal);
+        viewHistoryBtn.addEventListener('click', showHistoryModal);
+        
         retryMsg.innerText = "按 [任意键] 再次挑战";
         overlay.style.display = 'flex'; overlay.offsetHeight; overlay.classList.add('show');
         setTimeout(() => { retryMsg.classList.add('ready'); canRestart = true; }, 2000);
@@ -505,6 +741,278 @@
         document.getElementById('stat-shatter').innerText = stats.shattered;
         document.getElementById('stat-drown').innerText = stats.drowned;
         document.getElementById('stat-eaten').innerText = stats.eaten;
+    }
+    
+    // 截图保存功能
+    function captureScreenshot(playerName) {
+        // 创建临时Canvas
+        const tempCanvas = document.createElement('canvas');
+        const tempCtx = tempCanvas.getContext('2d');
+        
+        // 设置临时Canvas尺寸（比游戏Canvas稍大，用于添加边框和信息）
+        tempCanvas.width = canvas.width + 100;
+        tempCanvas.height = canvas.height + 180;
+        
+        // 绘制背景
+        tempCtx.fillStyle = '#1a1a1a';
+        tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+        
+        // 添加装饰边框
+        tempCtx.strokeStyle = '#00ffff';
+        tempCtx.lineWidth = 2;
+        tempCtx.strokeRect(10, 10, tempCanvas.width - 20, tempCanvas.height - 20);
+        
+        // 绘制游戏画面
+        tempCtx.drawImage(canvas, 50, 80);
+        
+        // 添加游戏标题
+        tempCtx.fillStyle = '#FFD700';
+        tempCtx.font = 'bold 28px Courier New';
+        tempCtx.textAlign = 'center';
+        tempCtx.fillText('方块青蛙过河 - 通关成就', tempCanvas.width/2, 40);
+        
+        // 添加玩家姓名
+        tempCtx.fillStyle = '#00ffff';
+        tempCtx.font = 'bold 22px Courier New';
+        tempCtx.textAlign = 'left';
+        tempCtx.fillText(`玩家: ${playerName}`, 60, tempCanvas.height - 70);
+        
+        // 添加游戏统计信息
+        tempCtx.fillStyle = '#ffffff';
+        tempCtx.font = '18px Courier New';
+        tempCtx.fillText(`难度: ${difficultySettings[difficulty].name}`, 60, tempCanvas.height - 45);
+        tempCtx.fillText(`死亡次数: ${stats.deaths}`, 250, tempCanvas.height - 45);
+        tempCtx.fillText(`极限操作: ${stats.bulletTimesTriggered}次`, 420, tempCanvas.height - 45);
+        
+        // 添加日期时间
+        const now = new Date();
+        const dateStr = now.toLocaleDateString('zh-CN');
+        const timeStr = now.toLocaleTimeString('zh-CN');
+        tempCtx.font = '16px Courier New';
+        tempCtx.fillStyle = '#aaaaaa';
+        tempCtx.fillText(`${dateStr} ${timeStr}`, 60, tempCanvas.height - 20);
+        
+        // 添加游戏版本信息
+        tempCtx.textAlign = 'right';
+        tempCtx.fillText('方块青蛙过河 v0.5', tempCanvas.width - 60, tempCanvas.height - 20);
+        
+        // 重置文本对齐方式
+        tempCtx.textAlign = 'left';
+        
+        // 返回图像数据
+        return tempCanvas.toDataURL('image/png');
+    }
+    
+    // 保存截图到文件
+    function saveScreenshotToFile(dataURL, playerName) {
+        try {
+            console.log('开始保存截图...', dataURL.substring(0, 50) + '...');
+            
+            const now = new Date();
+            const timestamp = now.toISOString().replace(/[:.]/g, '-').slice(0, -5);
+            const filename = `青蛙过河_${playerName}_${timestamp}.png`;
+            
+            // 方法1: 使用现代浏览器的download属性
+            if (document.createElement('a').download !== undefined) {
+                console.log('使用方法1: download属性');
+                const link = document.createElement('a');
+                link.href = dataURL;
+                link.download = filename;
+                link.style.display = 'none';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            }
+            // 方法2: 使用window.open (备用方案)
+            else {
+                console.log('使用方法2: window.open');
+                const newWindow = window.open(dataURL, '_blank');
+                if (!newWindow) {
+                    throw new Error('弹出窗口被阻止，请检查浏览器设置');
+                }
+                showNotification('请右键点击图片选择"另存为"', 'info');
+                return;
+            }
+            
+            // 显示成功通知
+            showNotification(`截图已保存为: ${filename}`, 'success');
+            
+            // 记录保存历史
+            saveToHistory(playerName, filename);
+            
+        } catch (error) {
+            console.error('保存截图失败:', error);
+            showNotification('保存截图失败: ' + error.message + '，请尝试右键图片另存为', 'error');
+            
+            // 备用方案：在新窗口显示图片
+            try {
+                const newWindow = window.open(dataURL, '_blank');
+                if (newWindow) {
+                    showNotification('已在新窗口打开截图，请右键选择"另存为"', 'info');
+                }
+            } catch (e) {
+                console.error('备用方案也失败:', e);
+                showNotification('保存功能完全失败，请截图当前页面', 'error');
+            }
+        }
+    }
+    
+    // 保存历史记录到localStorage
+    function saveToHistory(playerName, filename) {
+        try {
+            const history = JSON.parse(localStorage.getItem('frogGameHistory') || '[]');
+            history.push({
+                playerName: playerName,
+                filename: filename,
+                date: new Date().toISOString(),
+                stats: {
+                    deaths: stats.deaths,
+                    difficulty: difficulty,
+                    bulletTimesTriggered: stats.bulletTimesTriggered
+                }
+            });
+            
+            // 只保留最近10条记录
+            if (history.length > 10) {
+                history.shift();
+            }
+            
+            localStorage.setItem('frogGameHistory', JSON.stringify(history));
+        } catch (error) {
+            console.error('保存历史记录失败:', error);
+        }
+    }
+    
+    // 显示姓名输入框
+    function showNameInputModal() {
+        const modal = document.getElementById('name-input-modal');
+        modal.style.display = 'flex';
+        document.getElementById('player-name-input').value = '';
+        document.getElementById('name-error').textContent = '';
+        document.getElementById('player-name-input').focus();
+    }
+    
+    // 隐藏姓名输入框
+    function hideNameInputModal() {
+        document.getElementById('name-input-modal').style.display = 'none';
+    }
+    
+    // 验证姓名输入
+    function validatePlayerName(name) {
+        if (!name || name.trim() === '') {
+            return '请输入你的名字';
+        }
+        if (name.length < 2) {
+            return '名字至少需要2个字符';
+        }
+        if (name.length > 10) {
+            return '名字不能超过10个字符';
+        }
+        return null;
+    }
+    
+    // 保存截图并关闭对话框
+    function saveScreenshotWithName() {
+        const nameInput = document.getElementById('player-name-input');
+        const playerName = nameInput.value.trim();
+        const errorElement = document.getElementById('name-error');
+        
+        // 验证输入
+        const error = validatePlayerName(playerName);
+        if (error) {
+            errorElement.textContent = error;
+            return;
+        }
+        
+        // 捕获截图
+        const screenshotData = captureScreenshot(playerName);
+        
+        // 保存截图
+        saveScreenshotToFile(screenshotData, playerName);
+        
+        // 关闭对话框
+        hideNameInputModal();
+    }
+    
+    // 显示历史记录
+    function showHistoryModal() {
+        const history = JSON.parse(localStorage.getItem('frogGameHistory') || '[]');
+        
+        if (history.length === 0) {
+            showNotification('暂无历史记录');
+            return;
+        }
+        
+        // 创建历史记录模态框
+        const modal = document.createElement('div');
+        modal.className = 'name-modal';
+        modal.style.display = 'flex';
+        
+        modal.innerHTML = `
+            <div class="name-modal-content">
+                <h3>历史记录</h3>
+                <div class="history-list">
+                    ${history.map((record, index) => `
+                        <div class="history-item">
+                            <div class="history-header">
+                                <span class="player-name">${record.playerName}</span>
+                                <span class="history-date">${new Date(record.date).toLocaleDateString('zh-CN')}</span>
+                            </div>
+                            <div class="history-stats">
+                                难度: ${difficultySettings[record.stats.difficulty].name} |
+                                死亡: ${record.stats.deaths} |
+                                极限操作: ${record.stats.bulletTimesTriggered}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+                <button class="btn-secondary" onclick="this.closest('.name-modal').remove()">关闭</button>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+    }
+    
+    // 增强的通知系统
+    function showNotification(message, type = 'info') {
+        const notification = document.createElement('div');
+        notification.className = `notification notification-${type}`;
+        
+        // 根据类型设置样式
+        const styles = {
+            info: { bg: 'rgba(0, 0, 0, 0.8)', color: '#ffffff' },
+            success: { bg: 'rgba(0, 255, 0, 0.8)', color: '#000000' },
+            error: { bg: 'rgba(255, 0, 0, 0.8)', color: '#ffffff' }
+        };
+        
+        const style = styles[type] || styles.info;
+        
+        notification.style.cssText = `
+            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+            background: ${style.bg}; color: ${style.color}; padding: 12px 24px;
+            border-radius: 6px; font-size: 16px; z-index: 1000;
+            transition: all 0.3s ease; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        `;
+        
+        notification.textContent = message;
+        document.body.appendChild(notification);
+        
+        // 添加显示动画
+        setTimeout(() => {
+            notification.style.opacity = '1';
+            notification.style.transform = 'translateX(-50%) translateY(0)';
+        }, 10);
+        
+        // 自动隐藏
+        setTimeout(() => {
+            notification.style.opacity = '0';
+            notification.style.transform = 'translateX(-50%) translateY(-20px)';
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    document.body.removeChild(notification);
+                }
+            }, 300);
+        }, 3000);
     }
     
     function triggerBulletTime(type) {
@@ -787,14 +1295,33 @@
         }
     }
     window.addEventListener('keydown', (e) => {
-        if (e.key === 'd') { debugMode = !debugMode; document.getElementById('debugPanel').style.display = debugMode?'block':'none'; return; }
+        if (e.key === 'd') {
+            debugMode = !debugMode;
+            document.getElementById('debugPanel').style.display = debugMode?'block':'none';
+            showNotification(debugMode ? 'Debug模式已开启 (按V键一键通关)' : 'Debug模式已关闭', 'info');
+            return;
+        }
+        
+        // Debug模式下的快捷键
+        if (debugMode) {
+            if (e.key === 'v' || e.key === 'V') {
+                console.log('Debug: 一键通关');
+                showNotification('Debug: 一键通关', 'success');
+                level = MAX_LEVEL;
+                player.gridX = 5;
+                player.gridY = 0;
+                triggerVictory();
+                return;
+            }
+        }
+        
         if (e.key === '1') { changeDifficulty('easy'); return; }
         if (e.key === '2') { changeDifficulty('medium'); return; }
         if (e.key === '3') { changeDifficulty('hard'); return; }
         
-        if (gameState === 'GAMEOVER' || gameState === 'VICTORY') { 
-            if (canRestart && !['F5','F12','Alt','Control','Shift','Meta'].includes(e.key)) initLevel(true); 
-            return; 
+        if (gameState === 'GAMEOVER' || gameState === 'VICTORY') {
+            if (canRestart && !['F5','F12','Alt','Control','Shift','Meta'].includes(e.key)) initLevel(true);
+            return;
         }
         if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
             e.preventDefault();
@@ -803,6 +1330,41 @@
     });
     
     document.getElementById('retry-msg').addEventListener('click', () => { if (canRestart) initLevel(true); });
+    
+    // 添加姓名输入相关事件监听器
+    document.getElementById('save-name-btn').addEventListener('click', saveScreenshotWithName);
+    document.getElementById('cancel-name-btn').addEventListener('click', hideNameInputModal);
+    
+    // 支持回车键确认
+    document.getElementById('player-name-input').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            saveScreenshotWithName();
+        }
+    });
+    
+    // 支持ESC键取消
+    document.getElementById('player-name-input').addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            hideNameInputModal();
+        }
+    });
+    
+    // 添加输入实时验证
+    document.getElementById('player-name-input').addEventListener('input', (e) => {
+        const name = e.target.value;
+        const errorElement = document.getElementById('name-error');
+        
+        if (name.length > 0 && name.length < 2) {
+            errorElement.textContent = '名字至少需要2个字符';
+            errorElement.style.color = '#ffaa00';
+        } else if (name.length > 10) {
+            errorElement.textContent = '名字不能超过10个字符';
+            errorElement.style.color = '#ffaa00';
+        } else {
+            errorElement.textContent = '';
+        }
+    });
+    
     initLevel(); loop();
 </script>
 </body>
