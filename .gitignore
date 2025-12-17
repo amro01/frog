@@ -25,3 +25,5 @@ logs/
 # 其他
 UPLOAD_GUIDE.md
 DEPLOY.md
+# 原程序，因为部署把它改为index.html了
+frog.html

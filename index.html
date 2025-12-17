@@ -103,6 +103,10 @@
     </div>
 
     <div class="sidebar">
+        <div class="stat-box" id="difficulty-box">
+            <span class="stat-label">游戏难度</span>
+            <span class="stat-value" id="disp-difficulty">普通</span>
+        </div>
         <div class="stat-box">
             <span class="stat-label">当前关卡</span>
             <span class="stat-value" id="disp-level">1</span>
@@ -119,7 +123,8 @@
             <div class="death-detail"><span>🐊 鳄鱼美餐</span> <span id="stat-eaten">0</span></div>
         </div>
         <div style="font-size: 11px; color: #666; margin-top: auto;">
-            <!-- 游戏说明已移除 -->
+            按 1-3 键切换难度<br>
+            1:简单 2:普通 3:困难
         </div>
     </div>
 
@@ -140,7 +145,63 @@
 
     let stats = { deaths: 0, flattened: 0, shattered: 0, drowned: 0, eaten: 0 };
     let level = 1;
-    let gameState = 'PLAYING'; 
+    let gameState = 'PLAYING';
+    let difficulty = 'medium'; // 'easy', 'medium', 'hard'
+    
+    // 难度设置
+    let difficultySettings = {
+        easy: {
+            name: '简单',
+            baseSpeed: 0.3,
+            speedIncrement: 0.03,
+            maxSpeed: 1.5,
+            roadObstacleInterval: 7,
+            riverSafeInterval: 6,
+            levelCap: 50,
+            colors: {
+                bg: '#87CEEB',
+                grass: '#90EE90',
+                road: '#696969',
+                river: '#00CED1',
+                player: '#32CD32',
+                accent: '#FFD700'
+            }
+        },
+        medium: {
+            name: '普通',
+            baseSpeed: 0.5,
+            speedIncrement: 0.05,
+            maxSpeed: 2.0,
+            roadObstacleInterval: 5,
+            riverSafeInterval: 4,
+            levelCap: 100,
+            colors: {
+                bg: '#87CEEB',
+                grass: '#7CFC00',
+                road: '#555',
+                river: '#1E90FF',
+                player: '#00ff00',
+                accent: '#00ff00'
+            }
+        },
+        hard: {
+            name: '困难',
+            baseSpeed: 0.7,
+            speedIncrement: 0.08,
+            maxSpeed: 3.0,
+            roadObstacleInterval: 3,
+            riverSafeInterval: 2,
+            levelCap: 150,
+            colors: {
+                bg: '#4B0082',
+                grass: '#228B22',
+                road: '#191970',
+                river: '#4B0082',
+                player: '#9400D3',
+                accent: '#9400D3'
+            }
+        }
+    };
     let isLevelTransitioning = false;
     let canRestart = false; 
     let debugMode = false;
@@ -174,6 +235,67 @@
         ];
     }
 
+    // 切换难度函数
+    function changeDifficulty(newDifficulty) {
+        if (difficulty === newDifficulty) return;
+        
+        difficulty = newDifficulty;
+        let settings = difficultySettings[difficulty];
+        
+        // 更新UI显示
+        document.getElementById('disp-difficulty').innerText = settings.name;
+        document.getElementById('disp-difficulty').style.color = settings.colors.accent;
+        document.getElementById('difficulty-box').style.borderLeftColor = settings.colors.accent;
+        
+        // 应用配色方案
+        applyColorScheme(settings.colors);
+        
+        // 显示切换提示
+        showNotification(`难度已切换到：${settings.name}`);
+        
+        // 重新开始当前关卡
+        initLevel(true);
+    }
+    
+    // 应用配色方案
+    function applyColorScheme(colors) {
+        // 更新画布背景色
+        canvas.style.backgroundColor = colors.bg;
+        
+        // 更新玩家颜色
+        player.color = colors.player;
+    }
+    
+    // 显示通知
+    function showNotification(message) {
+        // 创建通知元素
+        let notification = document.createElement('div');
+        notification.style.cssText = `
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-size: 16px;
+            z-index: 1000;
+            transition: opacity 0.3s;
+        `;
+        notification.textContent = message;
+        
+        document.body.appendChild(notification);
+        
+        // 2秒后移除
+        setTimeout(() => {
+            notification.style.opacity = '0';
+            setTimeout(() => {
+                document.body.removeChild(notification);
+            }, 300);
+        }, 2000);
+    }
+
     function initLevel(resetPlayer = true) {
         initMapLayout();
         if (resetPlayer) {
@@ -190,8 +312,8 @@
         gameState = 'PLAYING';
         isLevelTransitioning = false;
         crocAnim.active = false;
-        canRestart = false; 
-        particles = []; 
+        canRestart = false;
+        particles = [];
         obstacles = [];
         
         overlay.classList.remove('show');
@@ -199,19 +321,22 @@
         retryMsg.classList.remove('ready');
 
         document.getElementById('disp-level').innerText = level;
-
-        let baseSpeed = 0.5 + (level - 1) * 0.05;
-        if (baseSpeed > 2.0) baseSpeed = 2.0;
+        
+        // 根据难度设置参数
+        let settings = difficultySettings[difficulty];
+        let effectiveLevel = Math.min(level, settings.levelCap);
+        let baseSpeed = settings.baseSpeed + (effectiveLevel - 1) * settings.speedIncrement;
+        if (baseSpeed > settings.maxSpeed) baseSpeed = settings.maxSpeed;
 
         for (let r = 0; r < ROWS; r++) {
             let rowData = mapLayout[r];
             if (rowData.type === 'road') {
-                let maxCount = Math.min(3, 2 + Math.floor(level / 5)); 
+                let maxCount = Math.min(3, 2 + Math.floor(effectiveLevel / settings.roadObstacleInterval));
                 let count = Math.floor(Math.random() * maxCount) + 1;
                 generateLaneObstacles(r, count, rowData, baseSpeed, 'road');
             } else if (rowData.type === 'river') {
-                let reduction = Math.floor((level - 1) / 4);
-                let safeCount = Math.max(2, 4 - reduction); 
+                let reduction = Math.floor((effectiveLevel - 1) / settings.riverSafeInterval);
+                let safeCount = Math.max(2, 4 - reduction);
                 let count = safeCount + (Math.random() > 0.5 ? 1 : 0);
                 generateLaneObstacles(r, count, rowData, baseSpeed, 'river');
             }
@@ -250,7 +375,17 @@
     }
 
     function getRandomCarColor() {
-        const colors = ['#FF4500', '#FF1493', '#FFFF00', '#00FFFF', '#7FFF00'];
+        let colors;
+        if (difficulty === 'easy') {
+            // 暖色调为主
+            colors = ['#FF4500', '#FF1493', '#FFFF00', '#FFA500', '#FF6347'];
+        } else if (difficulty === 'medium') {
+            // 当前混合色
+            colors = ['#FF4500', '#FF1493', '#FFFF00', '#00FFFF', '#7FFF00'];
+        } else {
+            // 冷色调为主
+            colors = ['#4169E1', '#00CED1', '#00BFFF', '#1E90FF', '#6495ED'];
+        }
         return colors[Math.floor(Math.random() * colors.length)];
     }
 
@@ -537,9 +672,10 @@
         ctx.save(); ctx.translate(VIEW_OFFSET_X, VIEW_OFFSET_Y);
 
         // 1. 绘制背景层 (加入细节)
+        let colors = difficultySettings[difficulty].colors;
         for (let r = 0; r < ROWS; r++) {
             let type = mapLayout[r].type;
-            let color = (type === 'grass') ? '#7CFC00' : (type === 'road') ? '#555' : '#1E90FF';
+            let color = (type === 'grass') ? colors.grass : (type === 'road') ? colors.road : colors.river;
             heightOffset = 0;
             drawCube(0, r * TILE_SIZE, COLS * TILE_SIZE, TILE_SIZE, DEFAULT_BLOCK_DEPTH, color, 'none');
             
@@ -600,11 +736,28 @@
     }
     window.addEventListener('keydown', (e) => {
         if (e.key === 'd') { debugMode = !debugMode; document.getElementById('debugPanel').style.display = debugMode?'block':'none'; return; }
+        
+        // 难度切换
+        if (e.key === '1') { changeDifficulty('easy'); return; }
+        if (e.key === '2') { changeDifficulty('medium'); return; }
+        if (e.key === '3') { changeDifficulty('hard'); return; }
+        
         if (gameState === 'GAMEOVER') { if (canRestart) initLevel(true); return; }
         if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) handleInput(e.key);
         else if (e.key === ' ') { if(canRestart && gameState === 'GAMEOVER') initLevel(true); }
     });
-    initLevel(); loop();
+    // 初始化难度显示
+    function initDifficultyDisplay() {
+        let settings = difficultySettings[difficulty];
+        document.getElementById('disp-difficulty').innerText = settings.name;
+        document.getElementById('disp-difficulty').style.color = settings.colors.accent;
+        document.getElementById('difficulty-box').style.borderLeftColor = settings.colors.accent;
+        applyColorScheme(settings.colors);
+    }
+
+    initLevel();
+    initDifficultyDisplay();
+    loop();
 </script>
 </body>
 </html>
