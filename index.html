@@ -315,8 +315,10 @@
             <div id="victory-stats-box" class="victory-stats">
                 <div style="text-align:center; color: #ffd700; margin-bottom:10px; border-bottom:1px solid #555;">生存报告</div>
                 <div class="victory-row"><span>💀 总牺牲:</span> <span id="vic-deaths">0</span></div>
-                <div class="victory-row"><span>🚗 被压扁:</span> <span id="vic-flat">0</span></div>
-                <div class="victory-row"><span>🌊 被淹死:</span> <span id="vic-drown">0</span></div>
+                <div class="victory-row"><span>🚗 惨遭压扁:</span> <span id="vic-flat">0</span></div>
+                <div class="victory-row"><span>💥 粉身碎骨:</span> <span id="vic-shatter">0</span></div>
+                <div class="victory-row"><span>🌊 落水淹死:</span> <span id="vic-drown">0</span></div>
+                <div class="victory-row"><span>🐊 鳄鱼美餐:</span> <span id="vic-eaten">0</span></div>
                 <div class="victory-row"><span>⚡ 极限操作:</span> <span id="vic-bt">0</span>次</div>
             </div>
 
@@ -691,12 +693,21 @@
         overlayTitle.style.color = "#FFD700"; overlayTitle.style.textShadow = "0 0 20px #FFD700";
         document.getElementById('vic-deaths').innerText = stats.deaths;
         document.getElementById('vic-flat').innerText = stats.flattened;
-        document.getElementById('vic-drown').innerText = stats.drowned + stats.eaten;
+        document.getElementById('vic-shatter').innerText = stats.shattered;
+        document.getElementById('vic-drown').innerText = stats.drowned;
+        document.getElementById('vic-eaten').innerText = stats.eaten;
         document.getElementById('vic-bt').innerText = stats.bulletTimesTriggered;
+        
+        // 清除之前可能存在的按钮容器，避免重复添加
+        const existingButtonContainer = overlay.querySelector('.victory-button-container');
+        if (existingButtonContainer) {
+            existingButtonContainer.remove();
+        }
         vicStatsBox.style.display = 'block';
         
         // 创建按钮容器
         const buttonContainer = document.createElement('div');
+        buttonContainer.className = 'victory-button-container';
         buttonContainer.style.marginTop = '20px';
         buttonContainer.style.display = 'flex';
         buttonContainer.style.justifyContent = 'center';
@@ -867,6 +878,10 @@
                 date: new Date().toISOString(),
                 stats: {
                     deaths: stats.deaths,
+                    flattened: stats.flattened,
+                    shattered: stats.shattered,
+                    drowned: stats.drowned,
+                    eaten: stats.eaten,
                     difficulty: difficulty,
                     bulletTimesTriggered: stats.bulletTimesTriggered
                 }
@@ -961,7 +976,11 @@
                             <div class="history-stats">
                                 难度: ${difficultySettings[record.stats.difficulty].name} |
                                 死亡: ${record.stats.deaths} |
-                                极限操作: ${record.stats.bulletTimesTriggered}
+                                压扁: ${record.stats.flattened} |
+                                粉碎: ${record.stats.shattered} |
+                                淹死: ${record.stats.drowned} |
+                                鳄鱼: ${record.stats.eaten} |
+                                极限: ${record.stats.bulletTimesTriggered}
                             </div>
                         </div>
                     `).join('')}
