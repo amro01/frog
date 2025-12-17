@@ -26,13 +26,8 @@
         }
         
         .game-container.bullet-time {
-            animation: pulse-border 0.5s infinite;
             border-color: #00ffff;
-        }
-        @keyframes pulse-border {
-            0% { box-shadow: 0 0 20px #00ffff; border-color: #00ffff; }
-            50% { box-shadow: 0 0 60px #ffffff; border-color: #ffffff; }
-            100% { box-shadow: 0 0 20px #00ffff; border-color: #00ffff; }
+            box-shadow: 0 0 30px #00ffff;
         }
 
         canvas {
@@ -406,22 +401,22 @@
     let timeScale = 1.0; 
     let bulletTimeTimer = 0; 
     let bulletTimeCooldown = 0; 
-    const BT_DURATION = 60; 
+    const BT_DURATION = 30;
     const BT_COOLDOWN = 180; 
     const BT_SLOW_FACTOR = 0.2; 
     const BT_ACTION_WINDOW = 250; 
 
     let difficultySettings = {
         easy: {
-            name: '简单', baseSpeed: 0.3, speedIncrement: 0.03, maxSpeed: 1.5, roadObstacleInterval: 7, riverSafeInterval: 6,
+            name: '简单', baseSpeed: 0.2, speedIncrement: 0.02, maxSpeed: 1.5, roadObstacleInterval: 7, riverSafeInterval: 6,
             colors: { bg: '#87CEEB', grass: '#90EE90', road: '#696969', river: '#00CED1', player: '#32CD32', accent: '#FFD700' }
         },
         medium: {
-            name: '普通', baseSpeed: 0.5, speedIncrement: 0.05, maxSpeed: 2.0, roadObstacleInterval: 5, riverSafeInterval: 4,
+            name: '普通', baseSpeed: 0.3, speedIncrement: 0.03, maxSpeed: 1.7, roadObstacleInterval: 5, riverSafeInterval: 3,
             colors: { bg: '#87CEEB', grass: '#7CFC00', road: '#555', river: '#1E90FF', player: '#00ff00', accent: '#00ff00' }
         },
         hard: {
-            name: '困难', baseSpeed: 0.7, speedIncrement: 0.08, maxSpeed: 3.0, roadObstacleInterval: 3, riverSafeInterval: 2,
+            name: '困难', baseSpeed: 0.5, speedIncrement: 0.05, maxSpeed: 2.0, roadObstacleInterval: 4, riverSafeInterval: 2,
             colors: { bg: '#4B0082', grass: '#228B22', road: '#191970', river: '#4B0082', player: '#9400D3', accent: '#9400D3' }
         }
     };
@@ -498,7 +493,7 @@
             player.crushProgress = 0;
             player.isUnstable = false;
             player.unstableTimer = 0;
-            player.lastActionTime = 0;
+            player.lastActionTime = Date.now();
             player.lastMoveType = 'none';
             player.moveCombo = 0;
             player.isSleeping = false;
@@ -590,17 +585,17 @@
         constructor(x, y, color, type) {
             this.x = x; this.y = y; this.color = color; this.type = type;
             this.life = 1.0; 
-            if (type === 'ripple') { this.radius = 5; this.decay = 0.02; } 
+            if (type === 'ripple') { this.radius = 5; this.decay = 0.008; }
             else if (type === 'firework') {
                 let angle = Math.random() * Math.PI * 2; let speed = Math.random() * 6 + 2;
                 this.vx = Math.cos(angle) * speed; this.vy = Math.sin(angle) * speed;
                 this.gravity = 0.1; this.decay = 0.01 + Math.random() * 0.01; this.size = Math.random() * 4 + 2;
             } else if (type === 'zzz') { 
-                this.decay = 0.012; this.vx = 0.3; this.vy = -0.3 - Math.random() * 0.3; this.size = 20 + Math.random() * 5;
+                this.decay = 0.003; this.vx = 0.3 + Math.random() * 0.2; this.vy = -0.05 - Math.random() * 0.05; this.size = 20 + Math.random() * 5;
             } else if (type === 'text') {
                 this.decay = 0.02; this.vx = 0; this.vy = -1; this.size = 20; this.text = color; 
-            } else if (type === 'sweat') { 
-                this.decay = 0.015; this.vx = (Math.random() - 0.5) * 2; this.vy = -2.0; this.size = 6; this.gravity = 0.12;
+            } else if (type === 'sweat') {
+                this.decay = 0.02; this.vx = (Math.random() - 0.5) * 1.5; this.vy = -0.8; this.size = 5; this.gravity = 0.08; this.airResistance = 0.8;
             } else { 
                 this.size = Math.random() * 6 + 3; 
                 let angle = Math.random() * Math.PI * 2; let speed = Math.random() * 5 + 2; 
@@ -613,6 +608,10 @@
             else if (this.type === 'firework' || this.type === 'sweat') {
                 this.x += this.vx; this.y += this.vy; this.vy += this.gravity; 
                 if(this.type === 'firework') { this.vx *= 0.95; this.vy *= 0.95; }
+                else if (this.type === 'sweat' && this.airResistance) {
+                    // 汗珠阻力效果：逐渐减速
+                    this.vx *= this.airResistance; this.vy *= this.airResistance;
+                }
                 this.life -= this.decay;
             } else {
                 this.x += this.vx; this.y += this.vy; if (this.friction) { this.vx *= this.friction; this.vy *= this.friction; }
@@ -674,7 +673,7 @@
                  stats.drowned++; overlayTitle.innerText = "咕噜咕噜..."; overlayTitle.style.color = "#1E90FF";
              } else {
                  stats.eaten++; crocAnim.active = true; crocAnim.frame = 0; crocAnim.x = drawX; crocAnim.y = drawY;
-                 setTimeout(() => { spawnParticles(centerX, centerY, '#ff0000', 60, 'shatter'); }, 200);
+                 setTimeout(() => { spawnParticles(centerX, centerY, '#ff0000', 60, 'shatter'); }, 500);
                  overlayTitle.innerText = "鳄鱼: 真香!"; overlayTitle.style.color = "#ff0000";
              }
         } else if (reason === 'bounds') {
@@ -1101,11 +1100,11 @@
     
     function drawCrocodileEffect() {
         if (!crocAnim.active) return;
-        crocAnim.frame++; let cx = crocAnim.x; let cy = crocAnim.y; let biteSpeed = 5; let maxOpen = 25; let currentOffset = Math.max(0, maxOpen - crocAnim.frame * biteSpeed);
+        crocAnim.frame++; let cx = crocAnim.x; let cy = crocAnim.y; let biteSpeed = 3; let maxOpen = 25; let currentOffset = Math.max(0, maxOpen - crocAnim.frame * biteSpeed);
         ctx.save(); ctx.translate(VIEW_OFFSET_X, VIEW_OFFSET_Y); heightOffset = 20; 
         drawCube(cx - 5, cy - currentOffset - 10, TILE_SIZE + 10, 20, 8, '#555'); ctx.fillStyle = '#fff'; for(let i=0; i<3; i++) ctx.fillRect(cx + 10 + i*15, cy - currentOffset + 10, 5, 5);
         drawCube(cx - 5, cy + TILE_SIZE + currentOffset - 10, TILE_SIZE + 10, 20, 8, '#555'); ctx.fillStyle = '#fff'; for(let i=0; i<3; i++) ctx.fillRect(cx + 10 + i*15, cy + TILE_SIZE + currentOffset - 15, 5, 5);
-        ctx.restore(); if (crocAnim.frame > 30) crocAnim.active = false;
+        ctx.restore(); if (crocAnim.frame > 50) crocAnim.active = false;
     }
     function darkenColor(color) { if(color.startsWith('#')) return '#444'; return '#333'; }
     function getOverlap(x1, w1, x2, w2) { let start = Math.max(x1, x2); let end = Math.min(x1 + w1, x2 + w2); return (end < start) ? 0 : end - start; }
@@ -1138,10 +1137,10 @@
         if (gameState === 'PLAYING') {
             if (now - player.lastActionTime > 2000) { 
                 player.isSleeping = true;
-                if (frameCount % 60 === 0) { let px = player.gridX * TILE_SIZE + TILE_SIZE/2; let py = player.gridY * TILE_SIZE; spawnParticles(px, py, '#fff', 1, 'zzz'); }
+                if (frameCount % 300 === 0) { let px = player.gridX * TILE_SIZE + TILE_SIZE/2; let py = player.gridY * TILE_SIZE; spawnParticles(px, py, '#fff', 1, 'zzz'); }
             } else { player.isSleeping = false; }
         }
-        if (player.renderMode === 'flattening') { player.crushProgress += 0.02; if (player.crushProgress >= 1) player.crushProgress = 1; }
+        if (player.renderMode === 'flattening') { player.crushProgress += 0.01; if (player.crushProgress >= 1) player.crushProgress = 1; }
         
         obstacles.forEach(obs => {
             obs.x += obs.speed * timeScale; 
@@ -1250,7 +1249,8 @@
 
         ctx.save(); ctx.translate(VIEW_OFFSET_X, VIEW_OFFSET_Y);
         let colors = difficultySettings[difficulty].colors;
-        if (timeScale < 1.0) ctx.filter = 'grayscale(60%) contrast(1.2)';
+        // 移除消耗GPU的滤镜效果
+        // if (timeScale < 1.0) ctx.filter = 'grayscale(60%) contrast(1.2)';
         
         for (let r = 0; r < ROWS; r++) {
             let type = mapLayout[r].type; let color = (type === 'grass') ? colors.grass : (type === 'road') ? colors.road : colors.river;
@@ -1277,11 +1277,13 @@
         }
         
         if (timeScale < 1.0) {
-            ctx.fillStyle = `rgba(0, 255, 255, ${Math.random() * 0.3 + 0.3})`;
+            // 使用固定透明度避免随机计算
+            ctx.fillStyle = "rgba(0, 255, 255, 0.5)";
             ctx.font = "bold 60px Courier New"; ctx.textAlign = "center";
-            ctx.shadowColor = "#00ffff"; ctx.shadowBlur = 20;
+            // 移除消耗GPU的阴影效果
+            // ctx.shadowColor = "#00ffff"; ctx.shadowBlur = 20;
             ctx.fillText("!!!", (COLS * TILE_SIZE)/2, (ROWS * TILE_SIZE)/2);
-            ctx.shadowBlur = 0;
+            // ctx.shadowBlur = 0;
         }
 
         ctx.restore();
