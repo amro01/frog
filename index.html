@@ -520,7 +520,13 @@
         overlay.classList.remove('show');
         overlay.style.display = 'none';
         retryMsg.classList.remove('ready');
-        vicStatsBox.style.display = 'none'; 
+        vicStatsBox.style.display = 'none';
+        
+        // 清理胜利按钮容器，防止死亡时仍然显示
+        const victoryButtonContainer = overlay.querySelector('.victory-button-container');
+        if (victoryButtonContainer) {
+            victoryButtonContainer.remove();
+        }
 
         document.getElementById('disp-level').innerText = level;
         
@@ -688,6 +694,10 @@
     function triggerVictory() {
         gameState = 'VICTORY';
         canRestart = false;
+        
+        // 隐藏姓名输入模态框，防止重复弹出
+        hideNameInputModal();
+        
         overlayTitle.innerText = "恭喜通关!";
         overlayTitle.style.color = "#FFD700"; overlayTitle.style.textShadow = "0 0 20px #FFD700";
         document.getElementById('vic-deaths').innerText = stats.deaths;
@@ -737,7 +747,8 @@
         overlay.appendChild(buttonContainer);
         
         // 添加事件监听
-        saveAchievementBtn.addEventListener('click', showNameInputModal);
+        // 移除重复的保存按钮事件监听，防止死亡时意外保存成绩
+        // saveAchievementBtn.addEventListener('click', showNameInputModal);
         viewHistoryBtn.addEventListener('click', showHistoryModal);
         
         retryMsg.innerText = "按 [任意键] 再次挑战";
