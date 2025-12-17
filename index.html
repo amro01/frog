@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>方块青蛙过河 0.12</title>
+    <title>方块青蛙过河 0.5 - 逻辑修复版</title>
     <style>
         body {
             background-color: #1a1a1a;
@@ -22,6 +22,17 @@
             position: relative;
             box-shadow: 0 0 50px rgba(0,0,0,0.8);
             border: 4px solid #333;
+            transition: border-color 0.1s;
+        }
+        
+        .game-container.bullet-time {
+            animation: pulse-border 0.5s infinite;
+            border-color: #00ffff;
+        }
+        @keyframes pulse-border {
+            0% { box-shadow: 0 0 20px #00ffff; border-color: #00ffff; }
+            50% { box-shadow: 0 0 60px #ffffff; border-color: #ffffff; }
+            100% { box-shadow: 0 0 20px #00ffff; border-color: #00ffff; }
         }
 
         canvas {
@@ -33,7 +44,7 @@
             display: none;
             position: absolute;
             top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0, 0, 0, 0.6);
+            background: rgba(0, 0, 0, 0.85);
             flex-direction: column;
             align-items: center;
             justify-content: center;
@@ -53,11 +64,24 @@
         #retry-msg {
             font-size: 18px; color: #fff; margin-top: 15px; 
             opacity: 0; transition: opacity 0.3s;
+            padding: 10px 20px;
+            border: 1px solid #fff;
+            border-radius: 4px;
         }
         #retry-msg.ready {
             opacity: 1;
             animation: blink 1s infinite;
         }
+        
+        .victory-stats {
+            margin-top: 20px;
+            text-align: left;
+            background: rgba(255,255,255,0.1);
+            padding: 15px;
+            border-radius: 8px;
+            display: none;
+        }
+        .victory-row { display: flex; justify-content: space-between; width: 220px; margin: 5px 0; font-size: 14px; }
 
         @keyframes blink { 50% { opacity: 0.5; } }
 
@@ -82,6 +106,12 @@
             font-size: 12px; display: flex; justify-content: space-between;
             border-bottom: 1px solid #444; padding: 5px 0;
         }
+        
+        #bt-indicator {
+            height: 4px; background: #00ffff; width: 0%; 
+            transition: width 0.1s linear; margin-top: 5px;
+        }
+        .bt-label { font-size: 10px; color: #00ffff; display: flex; justify-content: space-between; }
 
         #debugPanel {
             position: absolute; top: 10px; left: 10px;
@@ -93,10 +123,19 @@
 </head>
 <body>
 
-    <div class="game-container">
+    <div class="game-container" id="gameContainer">
         <canvas id="gameCanvas" width="600" height="600"></canvas>
         <div id="overlay">
             <h2 id="overlay-title">YOU DIED</h2>
+            
+            <div id="victory-stats-box" class="victory-stats">
+                <div style="text-align:center; color: #ffd700; margin-bottom:10px; border-bottom:1px solid #555;">生存报告</div>
+                <div class="victory-row"><span>💀 总牺牲:</span> <span id="vic-deaths">0</span></div>
+                <div class="victory-row"><span>🚗 被压扁:</span> <span id="vic-flat">0</span></div>
+                <div class="victory-row"><span>🌊 被淹死:</span> <span id="vic-drown">0</span></div>
+                <div class="victory-row"><span>⚡ 极限操作:</span> <span id="vic-bt">0</span>次</div>
+            </div>
+
             <p id="retry-msg">按 [任意键] 重试</p>
         </div>
         <div id="debugPanel">Debug Mode ON</div>
@@ -108,13 +147,19 @@
             <span class="stat-value" id="disp-difficulty">普通</span>
         </div>
         <div class="stat-box">
-            <span class="stat-label">当前关卡</span>
+            <span class="stat-label">当前关卡 / 50</span>
             <span class="stat-value" id="disp-level">1</span>
         </div>
         <div class="stat-box death">
             <span class="stat-label">牺牲总数</span>
             <span class="stat-value" id="disp-deaths">0</span>
         </div>
+        
+        <div style="background:#333; padding:10px; border-left: 4px solid #00ffff;">
+            <div class="bt-label"><span>子弹时间充能</span> <span id="bt-status">READY</span></div>
+            <div id="bt-indicator"></div>
+        </div>
+
         <div style="margin-top: 10px;">
             <div class="stat-label">死因统计:</div>
             <div class="death-detail"><span>🚗 惨遭压扁</span> <span id="stat-flat">0</span></div>
@@ -134,6 +179,10 @@
     const overlay = document.getElementById('overlay');
     const overlayTitle = document.getElementById('overlay-title');
     const retryMsg = document.getElementById('retry-msg');
+    const gameContainer = document.getElementById('gameContainer');
+    const btIndicator = document.getElementById('bt-indicator');
+    const btStatus = document.getElementById('bt-status');
+    const vicStatsBox = document.getElementById('victory-stats-box');
 
     const COLS = 11; 
     const ROWS = 10; 
@@ -141,72 +190,43 @@
     const VIEW_OFFSET_X = 25; 
     const VIEW_OFFSET_Y = 50;
     const DEFAULT_BLOCK_DEPTH = 8; 
-    const UNSTABLE_LIMIT = 0.8; 
+    const MAX_LEVEL = 50; 
+    // 稍微放宽不稳时限，防止子弹时间刚结束就判定死亡
+    const UNSTABLE_LIMIT = 1.0; 
 
-    let stats = { deaths: 0, flattened: 0, shattered: 0, drowned: 0, eaten: 0 };
+    let stats = { deaths: 0, flattened: 0, shattered: 0, drowned: 0, eaten: 0, bulletTimesTriggered: 0 };
+    
     let level = 1;
     let gameState = 'PLAYING';
-    let difficulty = 'medium'; // 'easy', 'medium', 'hard'
+    let difficulty = 'medium';
+    let frameCount = 0;
     
-    // 难度设置
+    let timeScale = 1.0; 
+    let bulletTimeTimer = 0; 
+    let bulletTimeCooldown = 0; 
+    const BT_DURATION = 60; 
+    const BT_COOLDOWN = 180; 
+    const BT_SLOW_FACTOR = 0.2; 
+    const BT_ACTION_WINDOW = 250; 
+
     let difficultySettings = {
         easy: {
-            name: '简单',
-            baseSpeed: 0.3,
-            speedIncrement: 0.03,
-            maxSpeed: 1.5,
-            roadObstacleInterval: 7,
-            riverSafeInterval: 6,
-            levelCap: 50,
-            colors: {
-                bg: '#87CEEB',
-                grass: '#90EE90',
-                road: '#696969',
-                river: '#00CED1',
-                player: '#32CD32',
-                accent: '#FFD700'
-            }
+            name: '简单', baseSpeed: 0.3, speedIncrement: 0.03, maxSpeed: 1.5, roadObstacleInterval: 7, riverSafeInterval: 6,
+            colors: { bg: '#87CEEB', grass: '#90EE90', road: '#696969', river: '#00CED1', player: '#32CD32', accent: '#FFD700' }
         },
         medium: {
-            name: '普通',
-            baseSpeed: 0.5,
-            speedIncrement: 0.05,
-            maxSpeed: 2.0,
-            roadObstacleInterval: 5,
-            riverSafeInterval: 4,
-            levelCap: 100,
-            colors: {
-                bg: '#87CEEB',
-                grass: '#7CFC00',
-                road: '#555',
-                river: '#1E90FF',
-                player: '#00ff00',
-                accent: '#00ff00'
-            }
+            name: '普通', baseSpeed: 0.5, speedIncrement: 0.05, maxSpeed: 2.0, roadObstacleInterval: 5, riverSafeInterval: 4,
+            colors: { bg: '#87CEEB', grass: '#7CFC00', road: '#555', river: '#1E90FF', player: '#00ff00', accent: '#00ff00' }
         },
         hard: {
-            name: '困难',
-            baseSpeed: 0.7,
-            speedIncrement: 0.08,
-            maxSpeed: 3.0,
-            roadObstacleInterval: 3,
-            riverSafeInterval: 2,
-            levelCap: 150,
-            colors: {
-                bg: '#4B0082',
-                grass: '#228B22',
-                road: '#191970',
-                river: '#4B0082',
-                player: '#9400D3',
-                accent: '#9400D3'
-            }
+            name: '困难', baseSpeed: 0.7, speedIncrement: 0.08, maxSpeed: 3.0, roadObstacleInterval: 3, riverSafeInterval: 2,
+            colors: { bg: '#4B0082', grass: '#228B22', road: '#191970', river: '#4B0082', player: '#9400D3', accent: '#9400D3' }
         }
     };
+    
     let isLevelTransitioning = false;
     let canRestart = false; 
     let debugMode = false;
-    let frameCount = 0;
-
     let crocAnim = { active: false, frame: 0, x: 0, y: 0 };
 
     let player = {
@@ -218,6 +238,7 @@
         isUnstable: false,
         unstableTimer: 0,
         lastActionTime: 0, 
+        lastMoveType: 'none', 
         moveCombo: 0,      
         isSleeping: false 
     };
@@ -226,7 +247,6 @@
     let mapLayout = [];
     let obstacles = [];
 
-    // 初始化地图布局
     function initMapLayout() {
         mapLayout = [
             { type: 'grass' }, { type: 'river', dir: 1 }, { type: 'river', dir: -1 }, { type: 'river', dir: 1 },    
@@ -235,64 +255,35 @@
         ];
     }
 
-    // 切换难度函数
     function changeDifficulty(newDifficulty) {
         if (difficulty === newDifficulty) return;
-        
         difficulty = newDifficulty;
         let settings = difficultySettings[difficulty];
-        
-        // 更新UI显示
         document.getElementById('disp-difficulty').innerText = settings.name;
         document.getElementById('disp-difficulty').style.color = settings.colors.accent;
         document.getElementById('difficulty-box').style.borderLeftColor = settings.colors.accent;
-        
-        // 应用配色方案
         applyColorScheme(settings.colors);
-        
-        // 显示切换提示
         showNotification(`难度已切换到：${settings.name}`);
-        
-        // 重新开始当前关卡
         initLevel(true);
     }
     
-    // 应用配色方案
     function applyColorScheme(colors) {
-        // 更新画布背景色
         canvas.style.backgroundColor = colors.bg;
-        
-        // 更新玩家颜色
         player.color = colors.player;
     }
     
-    // 显示通知
     function showNotification(message) {
-        // 创建通知元素
         let notification = document.createElement('div');
         notification.style.cssText = `
-            position: fixed;
-            top: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(0, 0, 0, 0.8);
-            color: white;
-            padding: 10px 20px;
-            border-radius: 5px;
-            font-size: 16px;
-            z-index: 1000;
-            transition: opacity 0.3s;
+            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8); color: white; padding: 10px 20px;
+            border-radius: 5px; font-size: 16px; z-index: 1000; transition: opacity 0.3s;
         `;
         notification.textContent = message;
-        
         document.body.appendChild(notification);
-        
-        // 2秒后移除
         setTimeout(() => {
             notification.style.opacity = '0';
-            setTimeout(() => {
-                document.body.removeChild(notification);
-            }, 300);
+            setTimeout(() => { document.body.removeChild(notification); }, 300);
         }, 2000);
     }
 
@@ -305,10 +296,23 @@
             player.crushProgress = 0;
             player.isUnstable = false;
             player.unstableTimer = 0;
-            player.lastActionTime = Date.now();
+            player.lastActionTime = 0;
+            player.lastMoveType = 'none';
             player.moveCombo = 0;
             player.isSleeping = false;
+            
+            timeScale = 1.0;
+            bulletTimeTimer = 0;
+            bulletTimeCooldown = 0;
+            gameContainer.classList.remove('bullet-time');
         }
+        
+        if (gameState === 'VICTORY') {
+            level = 1;
+            stats.deaths = 0; stats.flattened = 0; stats.shattered = 0; stats.drowned = 0; stats.eaten = 0; stats.bulletTimesTriggered = 0;
+            updateStatsUI();
+        }
+
         gameState = 'PLAYING';
         isLevelTransitioning = false;
         crocAnim.active = false;
@@ -319,23 +323,22 @@
         overlay.classList.remove('show');
         overlay.style.display = 'none';
         retryMsg.classList.remove('ready');
+        vicStatsBox.style.display = 'none'; 
 
         document.getElementById('disp-level').innerText = level;
         
-        // 根据难度设置参数
         let settings = difficultySettings[difficulty];
-        let effectiveLevel = Math.min(level, settings.levelCap);
-        let baseSpeed = settings.baseSpeed + (effectiveLevel - 1) * settings.speedIncrement;
+        let baseSpeed = settings.baseSpeed + (level - 1) * settings.speedIncrement;
         if (baseSpeed > settings.maxSpeed) baseSpeed = settings.maxSpeed;
 
         for (let r = 0; r < ROWS; r++) {
             let rowData = mapLayout[r];
             if (rowData.type === 'road') {
-                let maxCount = Math.min(3, 2 + Math.floor(effectiveLevel / settings.roadObstacleInterval));
+                let maxCount = Math.min(3, 2 + Math.floor(level / settings.roadObstacleInterval));
                 let count = Math.floor(Math.random() * maxCount) + 1;
                 generateLaneObstacles(r, count, rowData, baseSpeed, 'road');
             } else if (rowData.type === 'river') {
-                let reduction = Math.floor((effectiveLevel - 1) / settings.riverSafeInterval);
+                let reduction = Math.floor((level - 1) / settings.riverSafeInterval);
                 let safeCount = Math.max(2, 4 - reduction);
                 let count = safeCount + (Math.random() > 0.5 ? 1 : 0);
                 generateLaneObstacles(r, count, rowData, baseSpeed, 'river');
@@ -368,37 +371,32 @@
             let maxRandom = Math.max(0, sectorSize - width - 10);
             let startX = (i * sectorSize) + Math.random() * maxRandom;
             obstacles.push({
-                row: row, x: startX, width: width, type: type, speed: finalSpeed, color: color,
-                dir: rowData.dir // Store direction for lights
+                row: row, x: startX, width: width, type: type, originalSpeed: finalSpeed, speed: finalSpeed, color: color,
+                dir: rowData.dir
             });
         }
     }
 
     function getRandomCarColor() {
-        let colors;
-        if (difficulty === 'easy') {
-            // 暖色调为主
-            colors = ['#FF4500', '#FF1493', '#FFFF00', '#FFA500', '#FF6347'];
-        } else if (difficulty === 'medium') {
-            // 当前混合色
-            colors = ['#FF4500', '#FF1493', '#FFFF00', '#00FFFF', '#7FFF00'];
-        } else {
-            // 冷色调为主
-            colors = ['#4169E1', '#00CED1', '#00BFFF', '#1E90FF', '#6495ED'];
-        }
+        let colors = difficultySettings[difficulty].colors.accent === '#FFD700' 
+            ? ['#FF4500', '#FF1493', '#FFFF00', '#FFA500'] 
+            : ['#4169E1', '#00CED1', '#00BFFF', '#1E90FF', '#7FFF00'];
         return colors[Math.floor(Math.random() * colors.length)];
     }
 
-    // --- 粒子系统 ---
     class Particle {
         constructor(x, y, color, type) {
             this.x = x; this.y = y; this.color = color; this.type = type;
             this.life = 1.0; 
-            
-            if (type === 'ripple') {
-                this.radius = 5; this.decay = 0.02; 
+            if (type === 'ripple') { this.radius = 5; this.decay = 0.02; } 
+            else if (type === 'firework') {
+                let angle = Math.random() * Math.PI * 2; let speed = Math.random() * 6 + 2;
+                this.vx = Math.cos(angle) * speed; this.vy = Math.sin(angle) * speed;
+                this.gravity = 0.1; this.decay = 0.01 + Math.random() * 0.01; this.size = Math.random() * 4 + 2;
             } else if (type === 'zzz') { 
                 this.decay = 0.012; this.vx = 0.3; this.vy = -0.3 - Math.random() * 0.3; this.size = 20 + Math.random() * 5;
+            } else if (type === 'text') {
+                this.decay = 0.02; this.vx = 0; this.vy = -1; this.size = 20; this.text = color; 
             } else if (type === 'sweat') { 
                 this.decay = 0.015; this.vx = (Math.random() - 0.5) * 2; this.vy = -2.0; this.size = 6; this.gravity = 0.12;
             } else { 
@@ -409,24 +407,25 @@
             }
         }
         update() {
-            if (this.type === 'ripple') {
-                this.radius += 0.5; this.life -= this.decay;
-            } else if (this.type === 'zzz') {
-                this.x += this.vx; this.y += this.vy; this.life -= this.decay;
-            } else if (this.type === 'sweat') {
-                this.x += this.vx; this.y += this.vy; this.vy += this.gravity; this.life -= this.decay;
+            if (this.type === 'ripple') { this.radius += 0.5; this.life -= this.decay; } 
+            else if (this.type === 'firework' || this.type === 'sweat') {
+                this.x += this.vx; this.y += this.vy; this.vy += this.gravity; 
+                if(this.type === 'firework') { this.vx *= 0.95; this.vy *= 0.95; }
+                this.life -= this.decay;
             } else {
-                this.x += this.vx; this.y += this.vy; this.vx *= this.friction; this.vy *= this.friction; this.life -= this.decay;
+                this.x += this.vx; this.y += this.vy; if (this.friction) { this.vx *= this.friction; this.vy *= this.friction; }
+                this.life -= this.decay;
             }
         }
         draw(ctx) {
             ctx.globalAlpha = Math.max(0, this.life);
             if (this.type === 'ripple') {
-                ctx.strokeStyle = this.color; ctx.lineWidth = 2;
-                ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2); ctx.stroke();
+                ctx.strokeStyle = this.color; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2); ctx.stroke();
             } else if (this.type === 'zzz') {
                 ctx.fillStyle = this.color; ctx.font = `bold ${this.size}px monospace`; ctx.fillText("Z", this.x, this.y);
-            } else if (this.type === 'sweat') {
+            } else if (this.type === 'text') {
+                ctx.fillStyle = '#00ffff'; ctx.shadowColor="#000"; ctx.shadowBlur=2; ctx.font = `bold ${this.size}px monospace`; ctx.fillText(this.text, this.x, this.y); ctx.shadowBlur=0;
+            } else if (this.type === 'sweat' || this.type === 'firework') {
                 ctx.fillStyle = this.color; ctx.beginPath(); ctx.arc(this.x, this.y, this.size, 0, Math.PI*2); ctx.fill();
             } else {
                 ctx.fillStyle = this.color; ctx.fillRect(this.x, this.y, this.size, this.size);
@@ -438,15 +437,17 @@
     function spawnParticles(x, y, color, count, type) {
         for(let i=0; i<count; i++) {
             let offsetX = 0, offsetY = 0;
-            if (type === 'shatter') {
-                offsetX = (Math.random() - 0.5) * TILE_SIZE * 0.5;
-                offsetY = (Math.random() - 0.5) * TILE_SIZE * 0.5;
-            }
+            if (type === 'shatter') { offsetX = (Math.random() - 0.5) * TILE_SIZE * 0.5; offsetY = (Math.random() - 0.5) * TILE_SIZE * 0.5; }
             particles.push(new Particle(x + offsetX, y + offsetY, color, type));
         }
     }
+    
+    function spawnFirework() {
+        let x = Math.random() * canvas.width; let y = Math.random() * (canvas.height / 2);
+        let color = `hsl(${Math.random() * 360}, 100%, 50%)`;
+        spawnParticles(x, y, color, 40, 'firework');
+    }
 
-    // --- 死亡与状态 ---
     function triggerDeath(reason) {
         if (gameState !== 'PLAYING') return;
         gameState = 'GAMEOVER';
@@ -479,8 +480,25 @@
         }
         updateStatsUI();
         overlay.style.display = 'flex'; overlay.offsetHeight; overlay.classList.add('show');
+        retryMsg.innerText = "按 [任意键] 重试";
         setTimeout(() => { retryMsg.classList.add('ready'); canRestart = true; }, 1000);
     }
+    
+    function triggerVictory() {
+        gameState = 'VICTORY';
+        canRestart = false;
+        overlayTitle.innerText = "恭喜通关!";
+        overlayTitle.style.color = "#FFD700"; overlayTitle.style.textShadow = "0 0 20px #FFD700";
+        document.getElementById('vic-deaths').innerText = stats.deaths;
+        document.getElementById('vic-flat').innerText = stats.flattened;
+        document.getElementById('vic-drown').innerText = stats.drowned + stats.eaten;
+        document.getElementById('vic-bt').innerText = stats.bulletTimesTriggered;
+        vicStatsBox.style.display = 'block';
+        retryMsg.innerText = "按 [任意键] 再次挑战";
+        overlay.style.display = 'flex'; overlay.offsetHeight; overlay.classList.add('show');
+        setTimeout(() => { retryMsg.classList.add('ready'); canRestart = true; }, 2000);
+    }
+
     function updateStatsUI() {
         document.getElementById('disp-deaths').innerText = stats.deaths;
         document.getElementById('stat-flat').innerText = stats.flattened;
@@ -488,131 +506,72 @@
         document.getElementById('stat-drown').innerText = stats.drowned;
         document.getElementById('stat-eaten').innerText = stats.eaten;
     }
+    
+    function triggerBulletTime(type) {
+        timeScale = BT_SLOW_FACTOR;
+        bulletTimeTimer = BT_DURATION;
+        bulletTimeCooldown = BT_COOLDOWN;
+        stats.bulletTimesTriggered++;
+        gameContainer.classList.add('bullet-time');
+        
+        let tx = player.gridX * TILE_SIZE + TILE_SIZE/2;
+        let ty = player.gridY * TILE_SIZE;
+        let text = type === 'car' ? "ACTION!" : "EDGE!";
+        particles.push(new Particle(tx, ty, text, 'text')); 
+    }
 
-    // --- 绘图函数 (视觉增强) ---
-
-    // 基础方块绘制
     function drawCube(x, y, w, h, depth, color, eyeStyle = 'none') {
         let displayColor = color;
         if (eyeStyle === 'unstable' && Math.floor(Date.now() / 50) % 2 === 0) displayColor = '#ff3333'; 
-
         ctx.fillStyle = darkenColor(displayColor);
-        ctx.fillRect(x + w, y - heightOffset, depth, h); // 右侧
-        ctx.fillRect(x, y + h - heightOffset, w, depth); // 下侧
-        ctx.fillRect(x + w, y + h - heightOffset, depth, depth); // 角落
-
+        ctx.fillRect(x + w, y - heightOffset, depth, h); ctx.fillRect(x, y + h - heightOffset, w, depth); ctx.fillRect(x + w, y + h - heightOffset, depth, depth); 
         ctx.fillStyle = displayColor;
-        ctx.fillRect(x, y - heightOffset, w, h); // 顶面
-        
-        // 只有青蛙才画眼睛
+        ctx.fillRect(x, y - heightOffset, w, h); 
         if (eyeStyle !== 'none') {
             ctx.fillStyle = 'black';
-            if (eyeStyle === 'closed') {
-                ctx.fillRect(x + 5, y - heightOffset + 8, 8, 2);
-                ctx.fillRect(x + w - 13, y - heightOffset + 8, 8, 2);
-            } else if (eyeStyle === 'open' || eyeStyle === 'unstable') {
-                ctx.fillRect(x + 5, y - heightOffset + 5, 5, 5);
-                ctx.fillRect(x + w - 10, y - heightOffset + 5, 5, 5);
-            }
+            if (eyeStyle === 'closed') { ctx.fillRect(x + 5, y - heightOffset + 8, 8, 2); ctx.fillRect(x + w - 13, y - heightOffset + 8, 8, 2); } 
+            else if (eyeStyle === 'open' || eyeStyle === 'unstable') { ctx.fillRect(x + 5, y - heightOffset + 5, 5, 5); ctx.fillRect(x + w - 10, y - heightOffset + 5, 5, 5); }
         }
     }
-
-    // [美化] 绘制木头 (带纹理)
     function drawLog(obs) {
         let hOffset = 2;
-        // 1. 画基础木头
         drawCube(obs.x, obs.row * TILE_SIZE, obs.width, TILE_SIZE, DEFAULT_BLOCK_DEPTH, '#8B4513');
-        
-        // 2. 画纹理 (树皮条纹)
-        ctx.fillStyle = '#5C4033'; // 深褐色
-        let y = obs.row * TILE_SIZE - hOffset;
-        
-        // 在顶面上画几条随机的横线
-        for (let i = 10; i < obs.width - 10; i += 20) {
-            ctx.fillRect(obs.x + i, y, 4, TILE_SIZE);
-        }
-        // 画两端的"年轮面" (简单用深色表示)
-        ctx.fillRect(obs.x, y, 5, TILE_SIZE);
-        ctx.fillRect(obs.x + obs.width - 5, y, 5, TILE_SIZE);
+        ctx.fillStyle = '#5C4033'; let y = obs.row * TILE_SIZE - hOffset;
+        for (let i = 10; i < obs.width - 10; i += 20) ctx.fillRect(obs.x + i, y, 4, TILE_SIZE);
+        ctx.fillRect(obs.x, y, 5, TILE_SIZE); ctx.fillRect(obs.x + obs.width - 5, y, 5, TILE_SIZE);
     }
-
-    // [美化] 绘制汽车 (带车窗和车灯)
     function drawCar(obs) {
-        let hOffset = 5;
-        let y = obs.row * TILE_SIZE;
-        // 1. 车身
+        let hOffset = 5; let y = obs.row * TILE_SIZE;
         drawCube(obs.x, y, obs.width, TILE_SIZE, DEFAULT_BLOCK_DEPTH, obs.color);
-        
-        // 2. 挡风玻璃 (顶面中间浅蓝色)
-        ctx.fillStyle = '#87CEFA'; // SkyBlue
-        let glassMargin = 6;
-        ctx.fillRect(obs.x + glassMargin, y - hOffset + glassMargin, 
-                     obs.width - glassMargin*2, TILE_SIZE - glassMargin*2);
-
-        // 3. 车灯 (根据行驶方向)
-        let lightY = y - hOffset + 10;
-        let lightSize = 6;
-        
-        if (obs.dir === 1) { // 向右行驶
-            // 前灯 (黄) - 右侧
-            ctx.fillStyle = '#FFFF00'; 
-            ctx.fillRect(obs.x + obs.width - 4, lightY, 4, lightSize);
-            ctx.fillRect(obs.x + obs.width - 4, lightY + 20, 4, lightSize);
-            // 尾灯 (红) - 左侧
-            ctx.fillStyle = '#FF0000';
-            ctx.fillRect(obs.x, lightY, 4, lightSize);
-            ctx.fillRect(obs.x, lightY + 20, 4, lightSize);
-        } else { // 向左行驶
-            // 前灯 (黄) - 左侧
-            ctx.fillStyle = '#FFFF00';
-            ctx.fillRect(obs.x, lightY, 4, lightSize);
-            ctx.fillRect(obs.x, lightY + 20, 4, lightSize);
-            // 尾灯 (红) - 右侧
-            ctx.fillStyle = '#FF0000';
-            ctx.fillRect(obs.x + obs.width - 4, lightY, 4, lightSize);
-            ctx.fillRect(obs.x + obs.width - 4, lightY + 20, 4, lightSize);
+        ctx.fillStyle = '#87CEFA'; let glassMargin = 6; ctx.fillRect(obs.x + glassMargin, y - hOffset + glassMargin, obs.width - glassMargin*2, TILE_SIZE - glassMargin*2);
+        let lightY = y - hOffset + 10; let lightSize = 6;
+        if (obs.dir === 1) { 
+            ctx.fillStyle = '#FFFF00'; ctx.fillRect(obs.x + obs.width - 4, lightY, 4, lightSize); ctx.fillRect(obs.x + obs.width - 4, lightY + 20, 4, lightSize);
+            ctx.fillStyle = '#FF0000'; ctx.fillRect(obs.x, lightY, 4, lightSize); ctx.fillRect(obs.x, lightY + 20, 4, lightSize);
+        } else { 
+            ctx.fillStyle = '#FFFF00'; ctx.fillRect(obs.x, lightY, 4, lightSize); ctx.fillRect(obs.x, lightY + 20, 4, lightSize);
+            ctx.fillStyle = '#FF0000'; ctx.fillRect(obs.x + obs.width - 4, lightY, 4, lightSize); ctx.fillRect(obs.x + obs.width - 4, lightY + 20, 4, lightSize);
         }
     }
-
-    // [美化] 绘制马路细节
     function drawRoadDetails(row) {
-        let y = row * TILE_SIZE;
-        // 绘制虚线车道线
-        ctx.fillStyle = '#666'; // 比路面稍亮
-        let dashW = 20;
-        let gap = 30;
-        for (let x = 0; x < COLS * TILE_SIZE; x += (dashW + gap)) {
-            // 画在路中间
-            ctx.fillRect(x, y + TILE_SIZE/2 - 2, dashW, 4);
-        }
+        let y = row * TILE_SIZE; ctx.fillStyle = '#666'; let dashW = 20; let gap = 30;
+        for (let x = 0; x < COLS * TILE_SIZE; x += (dashW + gap)) ctx.fillRect(x, y + TILE_SIZE/2 - 2, dashW, 4);
     }
-
-    // [美化] 绘制河流细节
     function drawRiverDetails(row) {
-        let y = row * TILE_SIZE;
-        // 绘制波纹 (浅色线条)
-        ctx.fillStyle = '#1c86ee'; // 稍亮一点的蓝
-        // 简单的动态波纹效果 (利用 frameCount)
-        let offset = (frameCount * 0.5) % 50; 
-        if (mapLayout[row].dir === -1) offset = -offset; // 逆流
-
+        let y = row * TILE_SIZE; ctx.fillStyle = '#1c86ee'; 
+        let offset = (frameCount * 0.5) % 50; if (mapLayout[row].dir === -1) offset = -offset;
         for (let x = -50; x < COLS * TILE_SIZE; x += 60) {
             let waveX = x + offset;
-            if (waveX < COLS * TILE_SIZE && waveX > 0) {
-                ctx.fillRect(waveX, y + 10, 20, 2);
-                ctx.fillRect(waveX + 30, y + 35, 15, 2);
-            }
+            if (waveX < COLS * TILE_SIZE && waveX > 0) { ctx.fillRect(waveX, y + 10, 20, 2); ctx.fillRect(waveX + 30, y + 35, 15, 2); }
         }
     }
-
     function drawPancake(cx, cy, w, h) {
-        ctx.save();
-        ctx.fillStyle = '#004400'; ctx.beginPath(); ctx.ellipse(cx + 2, cy + 2, w/2 + 2, h/2 - 4, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.save(); ctx.fillStyle = '#004400'; ctx.beginPath(); ctx.ellipse(cx + 2, cy + 2, w/2 + 2, h/2 - 4, 0, 0, Math.PI * 2); ctx.fill();
         ctx.fillStyle = '#00ff00'; ctx.beginPath(); ctx.ellipse(cx, cy, w/2, h/2 - 5, 0, 0, Math.PI * 2); ctx.fill();
-        ctx.strokeStyle = '#000'; ctx.lineWidth = 2; let eyeOffset = w * 0.25; drawXMark(cx - eyeOffset, cy); drawXMark(cx + eyeOffset, cy);
-        ctx.restore();
+        ctx.strokeStyle = '#000'; ctx.lineWidth = 2; let eyeOffset = w * 0.25; drawXMark(cx - eyeOffset, cy); drawXMark(cx + eyeOffset, cy); ctx.restore();
     }
     function drawXMark(cx, cy) { ctx.beginPath(); ctx.moveTo(cx - 3, cy - 3); ctx.lineTo(cx + 3, cy + 3); ctx.moveTo(cx + 3, cy - 3); ctx.lineTo(cx - 3, cy + 3); ctx.stroke(); }
+    
     function drawCrocodileEffect() {
         if (!crocAnim.active) return;
         crocAnim.frame++; let cx = crocAnim.x; let cy = crocAnim.y; let biteSpeed = 5; let maxOpen = 25; let currentOffset = Math.max(0, maxOpen - crocAnim.frame * biteSpeed);
@@ -626,138 +585,225 @@
     function isColliding(x1, x2, w1, w2) { return x1 < x2 + w2 && x1 + w1 > x2; }
 
     function update() {
+        if (gameState === 'VICTORY') {
+            for (let i = particles.length - 1; i >= 0; i--) { particles[i].update(); if (particles[i].life <= 0) particles.splice(i, 1); }
+            if (Math.random() < 0.05) spawnFirework(); 
+             if (frameCount % 30 === 0) { player.gridY = 9; } if (frameCount % 30 === 15) { player.gridY = 8.5; } 
+            return;
+        }
+        
+        if (bulletTimeTimer > 0) {
+            timeScale = BT_SLOW_FACTOR; bulletTimeTimer--;
+            if (bulletTimeTimer <= 0) { timeScale = 1.0; gameContainer.classList.remove('bullet-time'); }
+        } else {
+            timeScale = 1.0; if (bulletTimeCooldown > 0) bulletTimeCooldown--;
+        }
+        
+        let cooldownPct = (1 - bulletTimeCooldown / BT_COOLDOWN) * 100;
+        btIndicator.style.width = cooldownPct + '%';
+        btStatus.innerText = bulletTimeCooldown > 0 ? (bulletTimeCooldown/60).toFixed(1) + 's' : 'READY';
+        btStatus.style.color = bulletTimeCooldown > 0 ? '#aaa' : '#00ffff';
+
         frameCount++;
         let now = Date.now();
+        let isActiveAction = (now - player.lastActionTime) < BT_ACTION_WINDOW;
+
         if (gameState === 'PLAYING') {
             if (now - player.lastActionTime > 2000) { 
                 player.isSleeping = true;
                 if (frameCount % 60 === 0) { let px = player.gridX * TILE_SIZE + TILE_SIZE/2; let py = player.gridY * TILE_SIZE; spawnParticles(px, py, '#fff', 1, 'zzz'); }
             } else { player.isSleeping = false; }
         }
-        if (player.renderMode === 'flattening') {
-            player.crushProgress += 0.02; if (player.crushProgress >= 1) player.crushProgress = 1;
-        }
+        if (player.renderMode === 'flattening') { player.crushProgress += 0.02; if (player.crushProgress >= 1) player.crushProgress = 1; }
+        
         obstacles.forEach(obs => {
-            obs.x += obs.speed; let totalW = COLS * TILE_SIZE;
+            obs.x += obs.speed * timeScale; 
+            let totalW = COLS * TILE_SIZE;
             if (obs.speed > 0 && obs.x > totalW) obs.x = -obs.width; else if (obs.speed < 0 && obs.x < -obs.width) obs.x = totalW;
         });
+        
         for (let i = particles.length - 1; i >= 0; i--) { particles[i].update(); if (particles[i].life <= 0) particles.splice(i, 1); }
         if (gameState !== 'PLAYING') return;
 
-        let pPxX = player.gridX * TILE_SIZE; let currentRow = mapLayout[player.gridY]; player.isUnstable = false; 
+        let pPxX = player.gridX * TILE_SIZE; 
+        let currentRow = mapLayout[player.gridY]; 
+        player.isUnstable = false; 
+        
+        // --- 河流逻辑修正开始 ---
         if (currentRow.type === 'river') {
             let onLog = false; let maxOverlap = 0;
             obstacles.forEach(obs => {
                 if (obs.row === player.gridY) {
                     let overlap = getOverlap(pPxX, TILE_SIZE, obs.x, obs.width);
-                    if (overlap > 0) { onLog = true; player.gridX += obs.speed / TILE_SIZE; if (overlap > maxOverlap) maxOverlap = overlap; }
+                    if (overlap > 0) { 
+                        onLog = true; 
+                        player.gridX += (obs.speed * timeScale) / TILE_SIZE; 
+                        if (overlap > maxOverlap) maxOverlap = overlap; 
+                    }
                 }
             });
-            if (!onLog) triggerDeath('water');
-            else { if (maxOverlap < TILE_SIZE * 0.4) { player.isUnstable = true; player.unstableTimer += 1/60; if (player.unstableTimer > UNSTABLE_LIMIT) triggerDeath('water'); } else player.unstableTimer = 0; }
-        } else player.unstableTimer = 0;
-        if (currentRow.type === 'road') {
-            obstacles.forEach(obs => { if (obs.row === player.gridY && isColliding(pPxX + 12, obs.x + 2, TILE_SIZE - 24, obs.width - 4)) triggerDeath('car'); });
+            
+            if (!onLog) {
+                triggerDeath('water');
+            } else {
+                // 1. 优先检测子弹时间触发 (半身位 + 冷却就绪 + 必须是纵向跳跃刚落地的瞬间)
+                let triggeredThisFrame = false;
+                if (maxOverlap < TILE_SIZE * 0.6 && 
+                    bulletTimeCooldown <= 0 && bulletTimeTimer <= 0 &&
+                    isActiveAction && 
+                    player.lastMoveType === 'vertical') {
+                    
+                    triggerBulletTime('log');
+                    triggeredThisFrame = true;
+                }
+
+                // 2. 危险检测 (只有在没有触发子弹时间，且子弹时间未激活时，才增加死亡计时)
+                // 如果子弹时间激活中(timeScale < 1.0)，我们暂停不稳计时，给玩家反应时间
+                if (maxOverlap < TILE_SIZE * 0.4) {
+                    if (!triggeredThisFrame && timeScale >= 1.0) {
+                        player.isUnstable = true;
+                        player.unstableTimer += 1/60;
+                        if (player.unstableTimer > UNSTABLE_LIMIT) triggerDeath('water');
+                    } else {
+                        // 处于子弹时间或刚刚触发，视为暂时安全
+                        player.isUnstable = false;
+                        player.unstableTimer = 0;
+                    }
+                } else {
+                    player.unstableTimer = 0;
+                }
+            }
+        } else {
+            player.unstableTimer = 0;
         }
+        // --- 河流逻辑修正结束 ---
+        
+        if (currentRow.type === 'road') {
+            obstacles.forEach(obs => { 
+                if (obs.row === player.gridY) {
+                    let pHitBox = { x: pPxX + 12, w: TILE_SIZE - 24 };
+                    let cHitBox = { x: obs.x + 4, w: obs.width - 8 };
+                    if (isColliding(pHitBox.x, cHitBox.x, pHitBox.w, cHitBox.w)) triggerDeath('car'); 
+                    
+                    if (bulletTimeCooldown <= 0 && bulletTimeTimer <= 0 && isActiveAction) {
+                        let triggerDist = TILE_SIZE * 0.7; 
+                        let dangerZone = {};
+                        if (obs.speed > 0) dangerZone = { x: obs.x + obs.width, w: triggerDist };
+                        else dangerZone = { x: obs.x - triggerDist, w: triggerDist };
+                        
+                        let pTriggerBox = { x: pPxX + 5, w: TILE_SIZE - 10 };
+                        if (isColliding(pTriggerBox.x, dangerZone.x, pTriggerBox.w, dangerZone.w) && 
+                           !isColliding(pHitBox.x, cHitBox.x, pHitBox.w, cHitBox.w)) {
+                            triggerBulletTime('car');
+                        }
+                    }
+                }
+            });
+        }
+        
         if (player.gridX < -0.5 || player.gridX >= COLS - 0.5) triggerDeath('bounds');
+        
         if (player.gridY === 0 && !isLevelTransitioning) {
-            isLevelTransitioning = true; level++;
-            document.querySelector('.game-container').style.boxShadow = "0 0 100px #fff";
-            setTimeout(() => { document.querySelector('.game-container').style.boxShadow = "0 0 50px rgba(0,0,0,0.8)"; initLevel(); }, 500);
+            if (level >= MAX_LEVEL) {
+                triggerVictory();
+            } else {
+                isLevelTransitioning = true; level++;
+                gameContainer.style.boxShadow = "0 0 100px #fff";
+                setTimeout(() => { gameContainer.style.boxShadow = "0 0 50px rgba(0,0,0,0.8)"; initLevel(); }, 500);
+            }
         }
     }
 
     function draw() {
         ctx.fillStyle = '#222'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.save(); ctx.translate(VIEW_OFFSET_X, VIEW_OFFSET_Y);
-
-        // 1. 绘制背景层 (加入细节)
-        let colors = difficultySettings[difficulty].colors;
-        for (let r = 0; r < ROWS; r++) {
-            let type = mapLayout[r].type;
-            let color = (type === 'grass') ? colors.grass : (type === 'road') ? colors.road : colors.river;
-            heightOffset = 0;
-            drawCube(0, r * TILE_SIZE, COLS * TILE_SIZE, TILE_SIZE, DEFAULT_BLOCK_DEPTH, color, 'none');
-            
-            // 绘制环境细节
-            if (type === 'road') drawRoadDetails(r);
-            if (type === 'river') drawRiverDetails(r);
-            if (type === 'grass') { // 简单杂草点缀
-                ctx.fillStyle = '#006400';
-                if(r%2===0) ctx.fillRect(50, r*TILE_SIZE+10, 4, 4);
-                else ctx.fillRect(200, r*TILE_SIZE+30, 4, 4);
-            }
+        
+        if (gameState === 'VICTORY') {
+            let hue = (frameCount * 0.5) % 360; ctx.fillStyle = `hsla(${hue}, 50%, 10%, 0.5)`; ctx.fillRect(0, 0, canvas.width, canvas.height);
         }
 
-        // 2. 绘制障碍物 (使用专用函数)
-        obstacles.forEach(obs => {
-            if (obs.type === 'road') {
-                drawCar(obs);
-            } else {
-                drawLog(obs);
-            }
-        });
+        ctx.save(); ctx.translate(VIEW_OFFSET_X, VIEW_OFFSET_Y);
+        let colors = difficultySettings[difficulty].colors;
+        if (timeScale < 1.0) ctx.filter = 'grayscale(60%) contrast(1.2)';
+        
+        for (let r = 0; r < ROWS; r++) {
+            let type = mapLayout[r].type; let color = (type === 'grass') ? colors.grass : (type === 'road') ? colors.road : colors.river;
+            heightOffset = 0; drawCube(0, r * TILE_SIZE, COLS * TILE_SIZE, TILE_SIZE, DEFAULT_BLOCK_DEPTH, color, 'none');
+            if (type === 'road') drawRoadDetails(r); if (type === 'river') drawRiverDetails(r);
+            if (type === 'grass') { ctx.fillStyle = '#006400'; if(r%2===0) ctx.fillRect(50, r*TILE_SIZE+10, 4, 4); else ctx.fillRect(200, r*TILE_SIZE+30, 4, 4); }
+        }
+        
+        obstacles.forEach(obs => { if (obs.type === 'road') drawCar(obs); else drawLog(obs); });
+        ctx.filter = 'none';
 
-        // 3. 绘制玩家
         if (player.visible) {
             let px = player.gridX * TILE_SIZE; let py = player.gridY * TILE_SIZE;
             if (player.renderMode === 'flattening') {
                 let progress = player.crushProgress;
-                let startW = TILE_SIZE - 10; let startH = TILE_SIZE - 10;
-                let endW = TILE_SIZE * 1.5; let endH = TILE_SIZE * 1.2;
-                let curW = startW + (endW - startW) * progress;
-                let curH = startH + (endH - startH) * progress;
-                let cx = px + TILE_SIZE/2; let cy = py + TILE_SIZE/2 + 5;
-                drawPancake(cx, cy, curW, curH);
+                let startW = TILE_SIZE - 10; let startH = TILE_SIZE - 10; let endW = TILE_SIZE * 1.5; let endH = TILE_SIZE * 1.2;
+                let curW = startW + (endW - startW) * progress; let curH = startH + (endH - startH) * progress;
+                drawPancake(px + TILE_SIZE/2, py + TILE_SIZE/2 + 5, curW, curH);
             } else {
-                heightOffset = 10;
-                let eyeState = player.isSleeping ? 'closed' : (player.isUnstable ? 'unstable' : 'open');
+                heightOffset = 10; let eyeState = player.isSleeping ? 'closed' : (player.isUnstable ? 'unstable' : 'open');
+                if (gameState === 'VICTORY') eyeState = 'closed';
                 drawCube(px + 5, py + 5, TILE_SIZE - 10, TILE_SIZE - 10, DEFAULT_BLOCK_DEPTH, player.color, eyeState);
             }
         }
+        
+        if (timeScale < 1.0) {
+            ctx.fillStyle = `rgba(0, 255, 255, ${Math.random() * 0.3 + 0.3})`;
+            ctx.font = "bold 60px Courier New"; ctx.textAlign = "center";
+            ctx.shadowColor = "#00ffff"; ctx.shadowBlur = 20;
+            ctx.fillText("!!!", (COLS * TILE_SIZE)/2, (ROWS * TILE_SIZE)/2);
+            ctx.shadowBlur = 0;
+        }
+
         ctx.restore();
         ctx.save(); ctx.translate(VIEW_OFFSET_X, VIEW_OFFSET_Y); particles.forEach(p => p.draw(ctx)); ctx.restore();
         drawCrocodileEffect();
     }
 
     function loop() { update(); draw(); requestAnimationFrame(loop); }
+    
     function handleInput(key) {
         if (gameState !== 'PLAYING' || isLevelTransitioning) return;
         let now = Date.now();
         if (now - player.lastActionTime < 300) player.moveCombo++; else player.moveCombo = 0;
         player.lastActionTime = now; player.isSleeping = false;
         if (player.moveCombo > 4) { let px = player.gridX * TILE_SIZE + TILE_SIZE/2; let py = player.gridY * TILE_SIZE; spawnParticles(px, py, '#e0f7fa', 2, 'sweat'); }
+        
         switch(key) {
-            case 'ArrowUp': if (player.gridY > 0) player.gridY--; break;
-            case 'ArrowDown': if (player.gridY < ROWS - 1) player.gridY++; break;
-            case 'ArrowLeft': player.gridX -= 0.5; break;
-            case 'ArrowRight': player.gridX += 0.5; break;
+            case 'ArrowUp': 
+                if (player.gridY > 0) { player.gridY--; player.lastMoveType = 'vertical'; }
+                break;
+            case 'ArrowDown': 
+                if (player.gridY < ROWS - 1) { player.gridY++; player.lastMoveType = 'vertical'; }
+                break;
+            case 'ArrowLeft': 
+                player.gridX -= 0.5; player.lastMoveType = 'horizontal'; 
+                break;
+            case 'ArrowRight': 
+                player.gridX += 0.5; player.lastMoveType = 'horizontal'; 
+                break;
         }
     }
     window.addEventListener('keydown', (e) => {
         if (e.key === 'd') { debugMode = !debugMode; document.getElementById('debugPanel').style.display = debugMode?'block':'none'; return; }
-        
-        // 难度切换
         if (e.key === '1') { changeDifficulty('easy'); return; }
         if (e.key === '2') { changeDifficulty('medium'); return; }
         if (e.key === '3') { changeDifficulty('hard'); return; }
         
-        if (gameState === 'GAMEOVER') { if (canRestart) initLevel(true); return; }
-        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) handleInput(e.key);
-        else if (e.key === ' ') { if(canRestart && gameState === 'GAMEOVER') initLevel(true); }
+        if (gameState === 'GAMEOVER' || gameState === 'VICTORY') { 
+            if (canRestart && !['F5','F12','Alt','Control','Shift','Meta'].includes(e.key)) initLevel(true); 
+            return; 
+        }
+        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+            e.preventDefault();
+            handleInput(e.key);
+        }
     });
-    // 初始化难度显示
-    function initDifficultyDisplay() {
-        let settings = difficultySettings[difficulty];
-        document.getElementById('disp-difficulty').innerText = settings.name;
-        document.getElementById('disp-difficulty').style.color = settings.colors.accent;
-        document.getElementById('difficulty-box').style.borderLeftColor = settings.colors.accent;
-        applyColorScheme(settings.colors);
-    }
-
-    initLevel();
-    initDifficultyDisplay();
-    loop();
+    
+    document.getElementById('retry-msg').addEventListener('click', () => { if (canRestart) initLevel(true); });
+    initLevel(); loop();
 </script>
 </body>
 </html>
