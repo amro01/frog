@@ -25,5 +25,6 @@ logs/
 # 其他
 UPLOAD_GUIDE.md
 DEPLOY.md
+子弹时间机制说明.md
 # 原程序，因为部署把它改为index.html了
 frog.html

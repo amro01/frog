@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>方块青蛙过河 0.52 </title>
+    <title>方块青蛙过河 0.6 </title>
     <meta name="version" content="0.52">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
@@ -302,6 +302,46 @@
             color: #ccc;
             font-size: 14px;
         }
+        .character-abilities {
+            background: #333;
+            padding: 8px;
+            border-left: 3px solid #ff6b35;
+            margin-bottom: 10px;
+            font-size: 11px;
+        }
+
+        .ability-item {
+            display: flex;
+            align-items: center;
+            margin: 4px 0;
+            color: #ccc;
+        }
+
+        .ability-icon {
+            margin-right: 6px;
+            font-size: 12px;
+            width: 16px;
+            text-align: center;
+        }
+
+        .ability-desc {
+            flex: 1;
+        }
+
+        .character-cooldown {
+            font-size: 10px;
+            color: #ff6b35;
+            margin-top: 3px;
+        }
+
+        .stat-box#character-box {
+            transition: all 0.3s ease;
+        }
+
+        .stat-box#character-box.character-switch {
+            transform: scale(1.05);
+            border-left-color: #ffff00;
+        }
     </style>
 </head>
 <body>
@@ -347,6 +387,19 @@
             <span class="stat-label">游戏难度</span>
             <span class="stat-value" id="disp-difficulty">普通</span>
         </div>
+        
+        <div class="stat-box" id="character-box">
+            <span class="stat-label">当前角色</span>
+            <span class="stat-value" id="disp-character">普通青蛙</span>
+        </div>
+        
+        <div class="character-abilities" id="character-abilities">
+            <div class="ability-item">
+                <span class="ability-icon">🐸</span>
+                <span class="ability-desc">标准移动</span>
+            </div>
+        </div>
+        
         <div class="stat-box">
             <span class="stat-label">当前关卡 / 50</span>
             <span class="stat-value" id="disp-level">1</span>
@@ -370,6 +423,7 @@
         </div>
         <div style="font-size: 11px; color: #666; margin-top: auto;">
             按 1-3 键切换难度<br>
+            按 C 键切换角色<br>
             1:简单 2:普通 3:困难
         </div>
     </div>
@@ -408,7 +462,7 @@
     const BT_DURATION = 30;
     const BT_COOLDOWN = 180; 
     const BT_SLOW_FACTOR = 0.2; 
-    const BT_ACTION_WINDOW = 250; 
+    const BT_ACTION_WINDOW = 150; 
 
     let difficultySettings = {
         easy: {
@@ -429,6 +483,59 @@
     let canRestart = false; 
     let debugMode = false;
     let crocAnim = { active: false, frame: 0, x: 0, y: 0 };
+
+    // 角色系统
+    let currentCharacter = 'NORMAL';
+    let characterStats = {
+        NORMAL: { deaths: 0, bulletTimesTriggered: 0 },
+        BULL_FROG: { deaths: 0, bulletTimesTriggered: 0, dodgesUsed: 0 }
+    };
+
+    // const CHARACTERS = {
+    //     NORMAL: {
+    //         name: '普通青蛙',
+    //         color: '#00ff00',
+    //         moveSpeed: { horizontal: 0.5, vertical: 1.0 },
+    //         abilities: [],
+    //         description: '标准的青蛙，平衡的移动速度'
+    //     },
+    //     BULL_FROG: {
+    //         name: '牛头青蛙',
+    //         color: '#00ff00', // 保持绿色身体，只加牛角装饰
+    //         moveSpeed: { horizontal: 0.25, vertical: 0.5 },
+    //         abilities: ['dodge', 'extended_unstable'],
+    //         description: '移动缓慢但拥有特殊技能',
+    //         dodgeCooldown: 0,
+    //         unstableTimeMultiplier: 2.0
+    //     }
+    // };
+    const CHARACTERS = {
+        NORMAL: {
+            name: '普通青蛙',
+            color: '#00ff00',
+            moveSpeed: { horizontal: 0.5, vertical: 1 }, // 左右0.5，上下1
+            moveDelay: 100,
+            abilities: [],
+            description: '标准的青蛙，灵活的横向移动'
+        },
+        BULL_FROG: {
+            name: '牛头青蛙',
+            color: '#00ff00',
+            moveSpeed: { horizontal: 0.25, vertical: 1 }, // 左右0.25，极慢
+            moveDelay: 400, // 移动硬直
+            abilities: ['dodge', 'extended_unstable'],
+            description: '移动极慢, 拥有2次受身机会',
+            dodgeCharges: 2, // 初始2次机会
+            unstableTimeMultiplier: 2.0
+        }
+    };
+
+    // 动态状态
+    let charState = {
+        lastMoveTime: 0,
+        currentDodgeCharges: 2 // 实时记录剩余次数
+    };
+
 
     let player = {
         gridX: 5, gridY: 9, 
@@ -488,6 +595,150 @@
         }, 2000);
     }
 
+    // 角色切换功能
+    function switchCharacter() {
+        const characterKeys = Object.keys(CHARACTERS);
+        const currentIndex = characterKeys.indexOf(currentCharacter);
+        const nextIndex = (currentIndex + 1) % characterKeys.length;
+        const newCharacter = characterKeys[nextIndex];
+        
+        currentCharacter = newCharacter;
+        applyCharacterSettings(newCharacter);
+        
+        // 重置新角色的状态
+        charState.lastMoveTime = 0;
+        charState.currentDodgeCharges = (newCharacter === 'BULL_FROG') ? 2 : 0;
+        
+        const char = CHARACTERS[newCharacter];
+        showNotification(`已切换到：${char.name} - ${char.description}`);
+        
+        updateCharacterUI();
+    }
+
+    function applyCharacterSettings(characterType) {
+        const char = CHARACTERS[characterType];
+        player.color = char.color;
+        
+        // 添加切换动画
+        const characterBox = document.getElementById('character-box');
+        characterBox.classList.add('character-switch');
+        setTimeout(() => {
+            characterBox.classList.remove('character-switch');
+        }, 300);
+    }
+
+    function updateCharacterUI() {
+        const char = CHARACTERS[currentCharacter];
+        document.getElementById('disp-character').innerText = char.name;
+        document.getElementById('disp-character').style.color = char.color;
+        
+        const abilityList = document.getElementById('character-abilities');
+        abilityList.innerHTML = '';
+        
+        char.abilities.forEach(ability => {
+            const info = getAbilityInfo(ability);
+            let extra = "";
+            if (ability === 'dodge') {
+                extra = ` (剩余:${charState.currentDodgeCharges})`;
+            }
+            abilityList.innerHTML += `
+                <div class="ability-item">
+                    <span class="ability-icon">${info.icon}</span>
+                    <span class="ability-desc">${info.name}${extra}</span>
+                </div>`;
+        });
+    }
+
+    function getAbilityInfo(ability) {
+        const abilities = {
+            'dodge': { icon: '🛡️', name: '受身闪避' },
+            'extended_unstable': { icon: '⏱️', name: '延长反应时间' }
+        };
+        return abilities[ability] || { icon: '❓', name: '未知技能' };
+    }
+
+    // 受身闪避技能
+    function checkDodgeAbility(obs) {
+        if (currentCharacter !== 'BULL_FROG') return false;
+        if (charState.currentDodgeCharges <= 0) return false;
+        
+        const pPxX = player.gridX * TILE_SIZE;
+        const pHitBox = { x: pPxX + 12, w: TILE_SIZE - 24 };
+        const cHitBox = { x: obs.x + 4, w: obs.width - 8 };
+        
+        // 检查是否发生实际碰撞
+        if (isColliding(pHitBox.x, cHitBox.x, pHitBox.w, cHitBox.w)) {
+            charState.currentDodgeCharges--; // 消耗次数
+            
+            // 执行受身：向汽车行驶的同方向或反方向快速弹开1.5格，防止连续判定
+            const pushDir = obs.speed > 0 ? 1.5 : -1.5;
+            player.gridX += pushDir;
+            
+            // 视觉效果
+            spawnParticles(pPxX + TILE_SIZE/2, player.gridY * TILE_SIZE + TILE_SIZE/2, '#FFD700', 15, 'shatter');
+            updateCharacterUI(); // 更新界面显示的次数
+            return true; // 抵消死亡
+        }
+        
+        return false;
+    }
+
+    // 牛头青蛙绘制函数
+    // function drawCharacter(x, y, w, h, depth, color, eyeStyle = 'none', characterType = 'NORMAL') {
+    //     // 绘制基础青蛙身体
+    //     drawCube(x, y, w, h, depth, color, eyeStyle);
+        
+    //     // 如果是牛头青蛙，添加牛角装饰
+    //     if (characterType === 'BULL_FROG') {
+    //         ctx.save();
+    //         ctx.translate(VIEW_OFFSET_X, VIEW_OFFSET_Y);
+            
+    //         // 绘制简单的牛角
+    //         const hornColor = '#654321';
+    //         const hornWidth = 3;
+    //         const hornHeight = 8;
+            
+    //         // 左牛角 - 调整位置到头部上方
+    //         ctx.fillStyle = hornColor;
+    //         ctx.fillRect(x + 8, y - heightOffset - hornHeight - 5, hornWidth, hornHeight);
+    //         ctx.fillRect(x + 6, y - heightOffset - hornHeight - 3, hornWidth + 2, 2);
+            
+    //         // 右牛角 - 调整位置到头部上方
+    //         ctx.fillRect(x + w - 11, y - heightOffset - hornHeight - 5, hornWidth, hornHeight);
+    //         ctx.fillRect(x + w - 10, y - heightOffset - hornHeight - 3, hornWidth + 2, 2);
+            
+    //         ctx.restore();
+    //     }
+    // }
+
+    function drawCharacter(x, y, w, h, depth, color, eyeStyle = 'none', characterType = 'NORMAL') {
+        // 1. 绘制基础身体
+        drawCube(x, y, w, h, depth, color, eyeStyle);
+        
+        // 2. 绘制牛角 (仅限牛头青蛙)
+        if (characterType === 'BULL_FROG') {
+            // 重要：不要在这里 translate，因为外层 draw() 已经 translate 过了
+            const topY = y - 10; // 方块顶部的Y坐标
+            const hornColor = '#654321'; // 深褐色
+            
+            ctx.fillStyle = hornColor;
+            
+            // 左角 (三角形)
+            ctx.beginPath();
+            ctx.moveTo(x + 4, topY + 2);     // 起点：方块左上边缘
+            ctx.lineTo(x - 4, topY - 12);    // 顶点：向左上方刺出
+            ctx.lineTo(x + 12, topY + 2);    // 终点
+            ctx.fill();
+
+            // 右角 (三角形)
+            ctx.beginPath();
+            ctx.moveTo(x + w - 4, topY + 2); // 起点：方块右上边缘
+            ctx.lineTo(x + w + 4, topY - 12);// 顶点：向右上方刺出
+            ctx.lineTo(x + w - 12, topY + 2);// 终点
+            ctx.fill();
+        }
+    }
+
     function initLevel(resetPlayer = true) {
         initMapLayout();
         if (resetPlayer) {
@@ -502,10 +753,19 @@
             player.moveCombo = 0;
             player.isSleeping = false;
             
+            // 重置角色动态状态
+            charState.lastMoveTime = 0;
+            charState.currentDodgeCharges = (currentCharacter === 'BULL_FROG') ? 2 : 0;
+            
             timeScale = 1.0;
             bulletTimeTimer = 0;
             bulletTimeCooldown = 0;
             gameContainer.classList.remove('bullet-time');
+        }
+        
+        // 关卡初始化时也要重置受身次数（如果不是从死亡重来的）
+        if (!resetPlayer && currentCharacter === 'BULL_FROG') {
+            charState.currentDodgeCharges = 2;
         }
         
         if (gameState === 'VICTORY') {
@@ -1148,6 +1408,8 @@
         frameCount++;
         let now = Date.now();
         let isActiveAction = (now - player.lastActionTime) < BT_ACTION_WINDOW;
+        
+        // 移除旧的冷却更新逻辑，因为我们现在使用dodgeUsed标记
 
         if (gameState === 'PLAYING') {
             if (now - player.lastActionTime > 2000) { 
@@ -1203,8 +1465,17 @@
                 if (maxOverlap < TILE_SIZE * 0.4) {
                     if (!triggeredThisFrame && timeScale >= 1.0) {
                         player.isUnstable = true;
-                        player.unstableTimer += 1/60;
-                        if (player.unstableTimer > UNSTABLE_LIMIT) triggerDeath('water');
+                        
+                        // 根据角色类型应用不同的不稳定时间倍数
+                        let timeMultiplier = 1.0;
+                        if (currentCharacter === 'BULL_FROG') {
+                            timeMultiplier = CHARACTERS.BULL_FROG.unstableTimeMultiplier;
+                        }
+                        
+                        player.unstableTimer += (1/60) * timeMultiplier;
+                        if (player.unstableTimer > UNSTABLE_LIMIT * timeMultiplier) {
+                            triggerDeath('water');
+                        }
                     } else {
                         // 处于子弹时间或刚刚触发，视为暂时安全
                         player.isUnstable = false;
@@ -1220,20 +1491,24 @@
         // --- 河流逻辑修正结束 ---
         
         if (currentRow.type === 'road') {
-            obstacles.forEach(obs => { 
+            obstacles.forEach(obs => {
                 if (obs.row === player.gridY) {
                     let pHitBox = { x: pPxX + 12, w: TILE_SIZE - 24 };
                     let cHitBox = { x: obs.x + 4, w: obs.width - 8 };
-                    if (isColliding(pHitBox.x, cHitBox.x, pHitBox.w, cHitBox.w)) triggerDeath('car'); 
+                    
+                    // 先检查受身闪避
+                    if (!checkDodgeAbility(obs) && isColliding(pHitBox.x, cHitBox.x, pHitBox.w, cHitBox.w)) {
+                        triggerDeath('car');
+                    }
                     
                     if (bulletTimeCooldown <= 0 && bulletTimeTimer <= 0 && isActiveAction) {
-                        let triggerDist = TILE_SIZE * 0.7; 
+                        let triggerDist = TILE_SIZE * 0.7;
                         let dangerZone = {};
                         if (obs.speed > 0) dangerZone = { x: obs.x + obs.width, w: triggerDist };
                         else dangerZone = { x: obs.x - triggerDist, w: triggerDist };
                         
                         let pTriggerBox = { x: pPxX + 5, w: TILE_SIZE - 10 };
-                        if (isColliding(pTriggerBox.x, dangerZone.x, pTriggerBox.w, dangerZone.w) && 
+                        if (isColliding(pTriggerBox.x, dangerZone.x, pTriggerBox.w, dangerZone.w) &&
                            !isColliding(pHitBox.x, cHitBox.x, pHitBox.w, cHitBox.w)) {
                             triggerBulletTime('car');
                         }
@@ -1242,7 +1517,11 @@
             });
         }
         
-        if (player.gridX < -0.5 || player.gridX >= COLS - 0.5) triggerDeath('bounds');
+        // 边界检查需要考虑不同角色的移动速度
+        const char = CHARACTERS[currentCharacter];
+        const leftBoundary = -0.5;
+        const rightBoundary = COLS - 0.5;
+        if (player.gridX < leftBoundary || player.gridX >= rightBoundary) triggerDeath('bounds');
         
         if (player.gridY === 0 && !isLevelTransitioning) {
             if (level >= MAX_LEVEL) {
@@ -1250,7 +1529,15 @@
             } else {
                 isLevelTransitioning = true; level++;
                 gameContainer.style.boxShadow = "0 0 100px #fff";
-                setTimeout(() => { gameContainer.style.boxShadow = "0 0 50px rgba(0,0,0,0.8)"; initLevel(); }, 500);
+                setTimeout(() => {
+                    gameContainer.style.boxShadow = "0 0 50px rgba(0,0,0,0.8)";
+                    initLevel(true); // 重置玩家位置到起始点
+                    // 每过一关重置牛头青蛙的受身次数
+                    if (currentCharacter === 'BULL_FROG') {
+                        charState.currentDodgeCharges = 2;
+                        updateCharacterUI();
+                    }
+                }, 500);
             }
         }
     }
@@ -1287,7 +1574,8 @@
             } else {
                 heightOffset = 10; let eyeState = player.isSleeping ? 'closed' : (player.isUnstable ? 'unstable' : 'open');
                 if (gameState === 'VICTORY') eyeState = 'closed';
-                drawCube(px + 5, py + 5, TILE_SIZE - 10, TILE_SIZE - 10, DEFAULT_BLOCK_DEPTH, player.color, eyeState);
+                // 使用新的角色绘制函数
+                drawCharacter(px + 5, py + 5, TILE_SIZE - 10, TILE_SIZE - 10, DEFAULT_BLOCK_DEPTH, player.color, eyeState, currentCharacter);
             }
         }
         
@@ -1311,23 +1599,44 @@
     function handleInput(key) {
         if (gameState !== 'PLAYING' || isLevelTransitioning) return;
         let now = Date.now();
-        if (now - player.lastActionTime < 300) player.moveCombo++; else player.moveCombo = 0;
-        player.lastActionTime = now; player.isSleeping = false;
-        if (player.moveCombo > 4) { let px = player.gridX * TILE_SIZE + TILE_SIZE/2; let py = player.gridY * TILE_SIZE; spawnParticles(px, py, '#e0f7fa', 2, 'sweat'); }
+        const char = CHARACTERS[currentCharacter];
         
+        if (now - charState.lastMoveTime < char.moveDelay) return;
+        
+        player.isSleeping = false;
+        player.lastActionTime = now;
+        
+        let moved = false;
         switch(key) {
-            case 'ArrowUp': 
-                if (player.gridY > 0) { player.gridY--; player.lastMoveType = 'vertical'; }
+            case 'ArrowUp':
+                if (player.gridY > 0) {
+                    player.gridY = Math.round(player.gridY - 1); // 确保是整数索引
+                    player.lastMoveType = 'vertical';
+                    moved = true;
+                }
                 break;
-            case 'ArrowDown': 
-                if (player.gridY < ROWS - 1) { player.gridY++; player.lastMoveType = 'vertical'; }
+            case 'ArrowDown':
+                if (player.gridY < ROWS - 1) {
+                    player.gridY = Math.round(player.gridY + 1); // 确保是整数索引
+                    player.lastMoveType = 'vertical';
+                    moved = true;
+                }
                 break;
-            case 'ArrowLeft': 
-                player.gridX -= 0.5; player.lastMoveType = 'horizontal'; 
+            case 'ArrowLeft':
+                // 左右移动允许 0.5 或 0.25
+                player.gridX -= char.moveSpeed.horizontal;
+                player.lastMoveType = 'horizontal';
+                moved = true;
                 break;
-            case 'ArrowRight': 
-                player.gridX += 0.5; player.lastMoveType = 'horizontal'; 
+            case 'ArrowRight':
+                player.gridX += char.moveSpeed.horizontal;
+                player.lastMoveType = 'horizontal';
+                moved = true;
                 break;
+        }
+        
+        if (moved) {
+            charState.lastMoveTime = now;
         }
     }
     window.addEventListener('keydown', (e) => {
@@ -1349,6 +1658,11 @@
                 triggerVictory();
                 return;
             }
+        }
+        
+        if (e.key === 'c' || e.key === 'C') {
+            switchCharacter();
+            return;
         }
         
         if (e.key === '1') { changeDifficulty('easy'); return; }
